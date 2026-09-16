@@ -1,0 +1,19 @@
+# Local environments, caches, and generated scratch work
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+tmp/
+.scratch/
+
+# Local credentials and operating-system files
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+Thumbs.db
+.DS_Store
+
+

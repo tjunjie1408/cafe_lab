@@ -1,0 +1,23 @@
+# Causal Cafe Lab — pinned workshop environment.
+# Target interpreter: CPython 3.12 (full rehearsal verified on 3.12.14).
+# These direct pins were verified: 30/30 tests pass on a fresh venv.
+# For byte-for-byte reproducibility of transitive dependencies, install from
+# requirements.lock.txt instead.
+#
+# Setup (guaranteed path, no extra tooling required):
+#   py -3.12 -m venv .venv
+#   .venv/Scripts/activate        # Windows;  source .venv/bin/activate on macOS/Linux
+#   python -m pip install -r requirements.txt
+#
+# Optional fast path with uv (only if the participant already has uv):
+#   uv venv --python 3.12
+#   uv pip install -r requirements.txt
+
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.0
+jupytext==1.19.5
+matplotlib==3.11.1
+seaborn==0.13.2
+streamlit==1.63.0
+pytest==9.1.1

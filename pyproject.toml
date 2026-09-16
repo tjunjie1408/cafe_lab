@@ -1,0 +1,5 @@
+[tool.jupytext]
+formats = "ipynb,py:percent"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
