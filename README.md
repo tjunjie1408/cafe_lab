@@ -1,6 +1,6 @@
 # Causal Cafe Lab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YOUR-ORG/causal-cafe-lab/blob/main/workshop.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tjunjie1408/cafe_lab/blob/main/workshop.ipynb)
 
 A hands-on causal machine learning workshop. You join Causal Cafe's Growth
 Intelligence Team after an audit finds that the coupon campaign confused
