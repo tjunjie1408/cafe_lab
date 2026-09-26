@@ -1,0 +1,10 @@
+# Causal Cafe Lab — only needed to run the notebook locally (Python 3.12).
+# In Google Colab, do NOT install this file: Colab's preinstalled packages are
+# enough, and replacing numpy mid-session forces a runtime restart.
+#
+#   python -m pip install -r requirements.txt jupyter
+
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.0
+matplotlib==3.11.1
