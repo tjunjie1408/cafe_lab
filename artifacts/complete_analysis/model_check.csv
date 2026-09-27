@@ -1,0 +1,5 @@
+model,held-out AUC mu0,held-out AUC mu1,pilot Qini
+"T-Learner, logistic",0.688026110650531,0.6837191358024692,29.2114555247723
+"T-Learner, boosting",0.6457632441945679,0.6356371252204586,6.572044427939561
+purchase probability (old AI),,,17.626440783464773
+perfect knowledge (simulator),,,38.20583286899993

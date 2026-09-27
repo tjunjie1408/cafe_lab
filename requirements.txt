@@ -1,6 +1,6 @@
 # Causal Cafe Lab — pinned workshop environment.
 # Target interpreter: CPython 3.12 (full rehearsal verified on 3.12.14).
-# These direct pins were verified: 30/30 tests pass on a fresh venv.
+# These direct pins were verified: 32/32 tests pass (30/30 on the fresh-venv rehearsal).
 # For byte-for-byte reproducibility of transitive dependencies, install from
 # requirements.lock.txt instead.
 #
@@ -19,5 +19,4 @@ scikit-learn==1.9.0
 jupytext==1.19.5
 matplotlib==3.11.1
 seaborn==0.13.2
-streamlit==1.63.0
 pytest==9.1.1

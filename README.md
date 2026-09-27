@@ -8,7 +8,7 @@ Under explicit identification assumptions, the common workshop path uses a
 hand-built T-Learner to estimate customer-level uplift, converts probability
 uplift into expected incremental profit, and allocates a fixed headquarters
 Growth Budget. Participants produce a targeting artifact and an audit-ready
-decision memo for a facilitator-provided Streamlit dashboard.
+decision memo; the facilitator reveals the synthetic truth at the end.
 
 The conceptual framework is:
 
@@ -30,7 +30,7 @@ Guaranteed path — standard library only, no extra tooling to install:
 py -3.12 -m venv .venv                 # Windows;  python3.12 -m venv .venv on macOS/Linux
 .venv\Scripts\activate                 # Windows;  source .venv/bin/activate on macOS/Linux
 python -m pip install -r requirements.txt
-python -m pytest -q --basetemp tmp/check  # optional: 30 checks should pass
+python -m pytest -q --basetemp tmp/check  # optional: 32 checks should pass
 ```
 
 If the Windows `py` launcher is unavailable, run the first command with an
@@ -55,16 +55,23 @@ python scripts/generate_cafe_data.py
 
 ## Participant quick start
 
-Open [`workshop.ipynb`](workshop.ipynb) and complete its four participant
-tasks:
+Open [`workshop.ipynb`](workshop.ipynb) in Google Colab (the participant
+`main` branch README carries the *Open in Colab* badge), run the setup cell,
+and complete the five participant tasks:
 
 1. specify the causal question and DAG;
 2. calculate the naive observed difference;
-3. implement the T-Learner;
-4. build the budget-constrained policy and decision memo.
+3. train a T-Learner on a 70/30 split, check it with held-out AUC, and compare
+   logistic regression with gradient boosting;
+4. score each ranking with a Qini curve on the randomized pilot
+   (`data/pilot_rct.csv`);
+5. build the budget-constrained policy and decision memo.
 
 The completed notebook writes `artifacts/customer_scores.csv` with the stable
-five-column artifact contract.
+five-column artifact contract and prints the numbers the decision memo needs.
+At the reveal the facilitator projects the complete analysis notebook
+(`solutions/causal_cafe_complete`). Colab setup and the day-of flow are in
+[docs/guides/COLAB_GUIDE.md](docs/guides/COLAB_GUIDE.md).
 
 ## Facilitator quick start
 
@@ -81,7 +88,15 @@ python -m jupytext --test workshop.py --to ipynb
 python -m pytest -q --basetemp tmp/facilitator-check
 ```
 
-Expected result: `30 passed`.
+Expected result: `32 passed`.
+
+Full answer key with every chart (concept diagrams, confounding/overlap
+check, uplift ranking quality, budget curve, policy and archetype reveal) and
+an auto-filled decision memo, written to `artifacts/complete_analysis/`:
+
+```powershell
+python solutions/causal_cafe_complete.py
+```
 
 
 ## Repository map
@@ -89,8 +104,9 @@ Expected result: `30 passed`.
 | Path | Responsibility |
 | --- | --- |
 | [`workshop.py`](workshop.py) / [`workshop.ipynb`](workshop.ipynb) | Participant notebook source and generated notebook |
-| [`src/`](src/) | Facilitator-owned simulator, loading, predictive baseline, and plotting helpers |
-| [`solutions/`](solutions/) | Facilitator-only causal and policy reference answers |
+| [`src/`](src/) | Facilitator-owned simulator, loading, predictive baseline, plotting and concept diagrams |
+| [`solutions/`](solutions/) | Facilitator-only causal and policy reference answers, plus the complete analysis notebook `causal_cafe_complete` |
 | [`scripts/`](scripts/) | Active dataset and backup-artifact generation commands |
 | [`data/`](data/) | Participant observations and isolated facilitator truth |
 | [`tests/`](tests/) | Data, export, estimator, policy, artifact, plot, and notebook safeguards |
+| [`docs/guides/`](docs/guides/) | Facilitator guide, code walkthrough, delivery checklist, Colab delivery |

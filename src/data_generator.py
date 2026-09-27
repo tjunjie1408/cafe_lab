@@ -19,15 +19,22 @@ def _sigmoid(values: np.ndarray) -> np.ndarray:
 def generate_cafe_data(
     n_customers: int = 10_000,
     seed: int = 42,
+    randomized_coupon_rate: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return participant observations and matched facilitator-only truth.
 
-    Coupon assignment favors customers with high old-model purchase scores but
-    remains stochastic. All common causes of assignment and purchase are
-    included in the participant-visible covariates.
+    By default coupon assignment favors customers with high old-model purchase
+    scores but remains stochastic. All common causes of assignment and purchase
+    are included in the participant-visible covariates.
+
+    With ``randomized_coupon_rate`` every customer gets a coupon with that
+    probability instead (a randomized pilot). The same random draws are used in
+    the same order, so the default output is unchanged.
     """
     if n_customers < 100:
         raise ValueError("n_customers must be at least 100")
+    if randomized_coupon_rate is not None and not 0 < randomized_coupon_rate < 1:
+        raise ValueError("randomized_coupon_rate must be between 0 and 1")
 
     rng = np.random.default_rng(seed)
     n = n_customers
@@ -89,6 +96,8 @@ def generate_cafe_data(
         0.10,
         0.90,
     )
+    if randomized_coupon_rate is not None:
+        treatment_propensity = np.full(n, randomized_coupon_rate)
     coupon_sent = rng.binomial(1, treatment_propensity, n).astype(np.int64)
 
     moderate_inactivity = np.exp(

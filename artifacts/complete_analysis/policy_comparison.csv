@@ -1,0 +1,5 @@
+policy,customers,spend,true_incremental_profit
+Random (mean of 100),,,-714.6605842224002
+Predictive ranking,962.0,2500.0,-945.6397770200001
+Causal value ranking,1691.0,2499.8399999999997,844.7342584200001
+Oracle (true CATE),1667.0,2499.9700000000003,1028.98638591

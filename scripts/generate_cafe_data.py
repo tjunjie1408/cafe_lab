@@ -15,6 +15,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data_generator import generate_cafe_data
 
+PILOT_CUSTOMERS = 5_000
+PILOT_SEED = 2026
+
 
 def _temporary_path(destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +109,19 @@ def main() -> None:
 
     print(f"Observed dataset: {len(observed):,} rows -> {observed_path}")
     print(f"Facilitator truth: {len(truth):,} rows -> {truth_path}")
+
+    # Last month's randomized pilot: new customers, coupons by coin flip.
+    pilot, pilot_truth = generate_cafe_data(
+        n_customers=PILOT_CUSTOMERS, seed=PILOT_SEED, randomized_coupon_rate=0.5
+    )
+    for frame in (pilot, pilot_truth):
+        frame["customer_id"] = frame["customer_id"].str.replace("CAFE-", "PILOT-", regex=False)
+    pilot_path = PROJECT_ROOT / "data" / "pilot_rct.csv"
+    pilot_truth_path = PROJECT_ROOT / "data" / "facilitator" / "pilot_truth.csv"
+    _write_dataset_pair(pilot, pilot_truth, pilot_path, pilot_truth_path)
+
+    print(f"Randomized pilot: {len(pilot):,} rows -> {pilot_path}")
+    print(f"Pilot truth: {len(pilot_truth):,} rows -> {pilot_truth_path}")
 
 
 if __name__ == "__main__":

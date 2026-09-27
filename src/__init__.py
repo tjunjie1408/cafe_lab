@@ -1,5 +1,6 @@
-"""Public API for the active Causal Cafe workshop implementation."""
+"""Causal Cafe workshop helpers.
 
-from .data_generator import generate_cafe_data
-
-__all__ = ["generate_cafe_data"]
+Deliberately empty: participant copies of ``src/`` omit the facilitator-only
+``data_generator`` module, so nothing here may import it. Import modules
+directly, e.g. ``from src.data_generator import generate_cafe_data``.
+"""

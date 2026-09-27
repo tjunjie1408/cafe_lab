@@ -1,26 +1,61 @@
 # %% [markdown]
-# # Causal Cafe Lab — Growth Intelligence Team
+# # Causal Cafe Lab - Growth Intelligence Team
 # Facilitator builds the interface; you build the causal decision logic.
 #
 # > Prediction estimates what will happen. Causality estimates what an action
 # > will change. Policy decides what we should do.
+#
+# **Running in Google Colab?** Run the setup cell below first. It downloads the
+# workshop files into this Colab session. Everything else runs unchanged.
 
 # %%
+# Setup: fetch the workshop files when they are not already next to this notebook.
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+REPO_URL = "https://github.com/tjunjie1408/cafe_lab.git"
+
+if not Path("src/workshop_data.py").exists():
+    if not Path("cafe_lab").exists():
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", REPO_URL, "cafe_lab"],
+            check=True,
+        )
+    os.chdir("cafe_lab")
+if str(Path.cwd()) not in sys.path:
+    sys.path.insert(0, str(Path.cwd()))  # so `import src` finds the downloaded helpers
+print("Working directory:", Path.cwd())
+
+# %%
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 from src.workshop_data import (
     FEATURES, ARTIFACT_COLUMNS, GROWTH_BUDGET,
-    load_observed_data, load_facilitator_truth,
+    load_observed_data, load_pilot_data, split_train_test,
 )
+from src.evaluation import qini_coefficient
+from src.policy import select_under_budget
 from src.predictive import fit_purchase_baseline
-from src.visualisation import plot_uplift_distribution, plot_policy_comparison
+from src.visualisation import (
+    plot_causal_dag,
+    plot_qini_curves,
+    plot_t_learner_schematic,
+    plot_uplift_archetypes,
+    plot_uplift_distribution,
+    plot_workshop_roadmap,
+)
 
 observed = load_observed_data()
 observed.head()
+
+# %%
+plot_workshop_roadmap()
 
 # %% [markdown]
 # The old AI ranks customers by predicted purchase probability. High reported
@@ -31,7 +66,15 @@ observed["purchase_probability"] = fit_purchase_baseline(observed)
 observed[["customer_id", "purchase_probability", "coupon_sent", "purchased_7d"]].head()
 
 # %% [markdown]
-# ## Task 1 — Specify the question (worksheet)
+# A high purchase probability tells you a customer buys. It does not tell you
+# whether the coupon is the reason. Which of these four boxes does the old
+# model fill its target list from?
+
+# %%
+plot_uplift_archetypes()
+
+# %% [markdown]
+# ## Task 1 - Specify the question (worksheet)
 # In the cell below, write your answers as plain text:
 #
 # - treatment
@@ -45,7 +88,13 @@ observed[["customer_id", "purchase_probability", "coupon_sent", "purchased_7d"]]
 # _Your answer here._
 
 # %% [markdown]
-# ## Task 2 — Naive observed difference
+# ### Check your DAG (run after the group discussion)
+
+# %%
+plot_causal_dag()
+
+# %% [markdown]
+# ## Task 2 - Naive observed difference
 # Compute E[Y|T=1] - E[Y|T=0]. This is what we observed, not what we want.
 # It must NOT be labeled ATE.
 
@@ -59,47 +108,152 @@ naive = naive_observed_difference(observed)
 print("naive observed difference:", naive)
 
 # %% [markdown]
-# ## Task 3 — T-Learner
-# Split by coupon_sent, fit one outcome model per arm on FEATURES, then predict
-# mu0 and mu1 for every customer and take uplift = mu1 - mu0.
+# ## Task 3 - Train a T-Learner, then test it on unseen customers
+# Real models are judged on data they never saw. Hold out 30% of the customers,
+# train on the other 70%.
 
 # %%
-def t_learner_uplift(df: pd.DataFrame, features=FEATURES):
-    # TODO: fit two LogisticRegression models and return (mu0, mu1, uplift).
+train, test = split_train_test(observed)
+print(f"train: {len(train):,} customers · test: {len(test):,} customers")
+
+# %% [markdown]
+# Split `train` by `coupon_sent`, fit one outcome model per arm on FEATURES,
+# then predict mu0 and mu1 for every customer in `score` and take
+# uplift = mu1 - mu0. `make_model` builds a fresh, untrained model each time you
+# call it, so the same function works with any scikit-learn classifier.
+
+# %%
+plot_t_learner_schematic()
+
+# %%
+def make_logistic():
+    return LogisticRegression(max_iter=2000)
+
+
+def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
+    # TODO: fit make_model() on the treated rows of train and another
+    # make_model() on the control rows, then return (mu0, mu1, uplift) for score.
     raise NotImplementedError
 
 
-mu0, mu1, uplift = t_learner_uplift(observed)
+mu0, mu1, uplift = t_learner_uplift(train, test)
 plot_uplift_distribution(uplift)
 
 # %% [markdown]
-# ## Task 4 — Campaign policy and decision memo
-# expected_incremental_profit = uplift * expected_order_margin - expected_coupon_cost
-#
-# Recommend positive-value customers under the fixed GROWTH_BUDGET, then write
-# artifacts/customer_scores.csv with columns ARTIFACT_COLUMNS.
+# **Is each outcome model any good?** Check it the way you would any classifier:
+# AUC on the held-out customers of its own arm.
 
 # %%
-def build_customer_scores(df: pd.DataFrame) -> pd.DataFrame:
-    # TODO: assemble purchase_probability, estimated_uplift,
-    # expected_incremental_profit, recommended; enforce the budget.
+def held_out_auc(test, mu0, mu1):
+    treated = test["coupon_sent"].to_numpy() == 1
+    y = test["purchased_7d"].to_numpy()
+    return roc_auc_score(y[~treated], mu0[~treated]), roc_auc_score(y[treated], mu1[treated])
+
+
+print("logistic  AUC mu0 %.3f · mu1 %.3f" % held_out_auc(test, mu0, mu1))
+
+# %% [markdown]
+# ### Swap in a stronger model
+# Gradient boosting usually beats logistic regression on tabular data. Pass it
+# in and compare. Which model would you ship?
+
+# %%
+def make_boosting():
+    return HistGradientBoostingClassifier(random_state=0)
+
+
+mu0_gb, mu1_gb, uplift_gb = t_learner_uplift(train, test, make_model=make_boosting)
+print("boosting  AUC mu0 %.3f · mu1 %.3f" % held_out_auc(test, mu0_gb, mu1_gb))
+
+# %% [markdown]
+# ### Stretch (finished early?) break the DAG on purpose
+# Your function takes a `features` argument. Re-run it without some confounders
+# and compare the mean uplift with the naive difference from Task 2:
+#
+# 1. drop only `loyalty_score`;
+# 2. drop all five customer-history features (`days_since_last_purchase`,
+#    `orders_30d`, `app_sessions_30d`, `average_order_value`, `loyalty_score`).
+#
+# What happens in each case, and why is the first one so mild?
+
+# %% [markdown]
+# ## Task 4 - Check the uplift ranking on the randomized pilot
+# AUC checks predictions of *purchase*. It cannot check *uplift*: nobody is
+# observed both with and without a coupon. Last month headquarters ran a small
+# pilot where a coin decided who got a coupon, so there the two groups are
+# comparable. Rank the pilot customers by a score and count the extra purchases
+# we would have captured:
+#
+# gain at the top k = treated buyers - control buyers × (treated count / control count)
+#
+# Plotting that gain against the share of customers targeted gives a **Qini
+# curve**. A ranking that puts the persuadable customers first rises fastest.
+
+# %%
+pilot = load_pilot_data()
+print(f"pilot: {len(pilot):,} customers · coupon rate {pilot['coupon_sent'].mean():.1%}")
+
+
+def qini_curve(pilot, score):
+    # TODO: sort the pilot by score (highest first); at every cut-off compute the
+    # cumulative treated count, control count, treated buyers and control buyers;
+    # return pd.DataFrame({"share": ..., "gain": ...}) with one row per customer.
     raise NotImplementedError
 
 
-scores = build_customer_scores(observed)
+baseline_model = LogisticRegression(max_iter=2000).fit(train[FEATURES], train["purchased_7d"])
+curves = {
+    "T-Learner, logistic": qini_curve(pilot, t_learner_uplift(train, pilot)[2]),
+    "T-Learner, boosting": qini_curve(pilot, t_learner_uplift(train, pilot, make_model=make_boosting)[2]),
+    "purchase probability (old AI)": qini_curve(pilot, baseline_model.predict_proba(pilot[FEATURES])[:, 1]),
+}
+plot_qini_curves(curves)
+
+# %% [markdown]
+# The dashed line is random targeting (Qini 0). Which model won on AUC? Which
+# one won on the pilot? Use the winner from here on.
+
+# %% [markdown]
+# ## Task 5 - Campaign policy and decision memo
+# expected_incremental_profit = uplift * expected_order_margin - expected_coupon_cost
+#
+# Score every customer with your chosen model, compute the expected incremental
+# profit, and let `select_under_budget(profit, cost, GROWTH_BUDGET)` pick
+# positive-value customers until the Growth Budget is spent. Write
+# artifacts/customer_scores.csv with columns ARTIFACT_COLUMNS.
+
+# %%
+def build_customer_scores(df, uplift):
+    # TODO: assemble purchase_probability, estimated_uplift,
+    # expected_incremental_profit and recommended (use select_under_budget).
+    raise NotImplementedError
+
+
+uplift_all = t_learner_uplift(train, observed)[2]
+scores = build_customer_scores(observed, uplift_all)
 Path("artifacts").mkdir(parents=True, exist_ok=True)
 scores.to_csv("artifacts/customer_scores.csv", index=False)
 scores.head()
 
 # %% [markdown]
-# ## Reveal (facilitator truth)
-# Compare your uplift with the simulator's known CATE. Real observational data
-# never contains both potential outcomes; this is a synthetic teaching check.
+# ### Check your policy
+# These are the numbers your decision memo needs. The facilitator will show how
+# the policy performs against the simulator's truth on the projector.
 
 # %%
-truth = load_facilitator_truth().set_index("customer_id").loc[observed["customer_id"]]
-print("your uplift vs true CATE corr:",
-      np.corrcoef(uplift, truth["true_cate"].to_numpy())[0, 1])
+chosen = scores["recommended"] == 1
+spend = observed.loc[chosen, "expected_coupon_cost"].sum()
+print(f"customers recommended:        {chosen.sum():,}")
+print(f"expected coupon spend:        {spend:,.2f} / {GROWTH_BUDGET:,.0f}")
+print(f"expected incremental orders:  {scores.loc[chosen, 'estimated_uplift'].sum():,.1f}")
+print(f"expected incremental profit:  {scores.loc[chosen, 'expected_incremental_profit'].sum():,.2f}")
+print(f"mean estimated uplift (ATE):  {scores['estimated_uplift'].mean():+.3f}")
+
+# %% [markdown]
+# ## Reveal - watch the projector
+# The simulator knows every customer's true effect, which real data never does.
+# The facilitator will compare the estimate and the targeting policy with that
+# truth on the projector.
 
 # %% [markdown]
 # ### Decision memo (fill in)

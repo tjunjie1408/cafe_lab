@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import pandas as pd
 
 from src.workshop_data import (
@@ -72,16 +73,18 @@ def test_naive_difference_overstates_true_ate() -> None:
 
 def test_t_learner_recovers_cate() -> None:
     from solutions.causal_solution import t_learner_uplift
+    from src.workshop_data import split_train_test
 
     observed = load_observed_data()
     truth = load_facilitator_truth()
-    mu0, mu1, uplift = t_learner_uplift(observed)
+    train, _ = split_train_test(observed)
+    mu0, mu1, uplift = t_learner_uplift(train, observed)
     assert mu0.shape == mu1.shape == uplift.shape == (len(observed),)
     np.testing.assert_allclose(uplift, mu1 - mu0)
     corr = np.corrcoef(uplift, truth["true_cate"].to_numpy())[0, 1]
     mae = np.abs(uplift - truth["true_cate"].to_numpy()).mean()
-    assert corr >= 0.85  # reference achieves ~0.915
-    assert mae <= 0.04  # reference achieves ~0.024
+    assert corr >= 0.85  # reference achieves ~0.893
+    assert mae <= 0.04  # reference achieves ~0.026
 
 
 def test_expected_incremental_profit_formula() -> None:
@@ -158,9 +161,149 @@ def test_plots_return_figures() -> None:
     assert fig1.axes and fig2.axes
 
 
+def test_concept_diagrams_render() -> None:
+    import io
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from src.visualisation import (
+        plot_causal_dag,
+        plot_t_learner_schematic,
+        plot_uplift_archetypes,
+        plot_workshop_roadmap,
+    )
+
+    for build in (
+        plot_workshop_roadmap,
+        plot_uplift_archetypes,
+        plot_causal_dag,
+        plot_t_learner_schematic,
+    ):
+        buffer = io.BytesIO()
+        build().savefig(buffer, format="png")
+        assert buffer.tell() > 10_000, build.__name__
+
+
+def test_complete_analysis_matches_reference(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from solutions.policy_solution import build_customer_scores
+
+    env = {
+        **os.environ,
+        "CAUSAL_CAFE_OUTPUT_DIR": str(tmp_path),
+        "MPLBACKEND": "Agg",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    subprocess.run(
+        [sys.executable, str(ROOT / "solutions" / "causal_cafe_complete.py")],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    for name in [
+        "policy_comparison.csv",
+        "archetype_summary.csv",
+        "analysis_summary.csv",
+        "decision_memo.md",
+        "03_causal_dag.png",
+        "12_archetype_reveal.png",
+    ]:
+        assert (tmp_path / name).exists(), name
+
+    observed = load_observed_data()
+    reference = build_customer_scores(observed)
+    chosen = reference["recommended"] == 1
+    summary = pd.read_csv(tmp_path / "analysis_summary.csv").set_index("metric")["value"]
+    assert summary["customers recommended"] == chosen.sum()
+    np.testing.assert_allclose(
+        summary["budget spent"], observed.loc[chosen, "expected_coupon_cost"].sum()
+    )
+    np.testing.assert_allclose(
+        summary["estimated incremental profit"],
+        reference.loc[chosen, "expected_incremental_profit"].sum(),
+    )
+
+    policies = pd.read_csv(tmp_path / "policy_comparison.csv").set_index("policy")
+    value = policies["true_incremental_profit"]
+    assert value["Oracle (true CATE)"] >= value["Causal value ranking"] > 0
+    assert value["Predictive ranking"] < 0
+
+
 def test_notebook_is_participant_safe() -> None:
     source = (ROOT / "workshop.py").read_text(encoding="utf-8")
     assert "import solutions" not in source and "from solutions" not in source
-    assert source.count("raise NotImplementedError") == 3  # Tasks 2, 3, 4
+    assert source.count("raise NotImplementedError") == 4  # Tasks 2, 3, 4, 5
     assert 'Path("artifacts").mkdir(parents=True, exist_ok=True)' in source
     assert (ROOT / "workshop.ipynb").exists()
+
+
+def test_train_test_split_is_stable_and_stratified() -> None:
+    from src.workshop_data import split_train_test
+
+    observed = load_observed_data()
+    train, test = split_train_test(observed)
+    again, _ = split_train_test(observed)
+    assert len(train) == 7_000 and len(test) == 3_000
+    assert train["customer_id"].tolist() == again["customer_id"].tolist()
+    assert abs(train["coupon_sent"].mean() - test["coupon_sent"].mean()) < 0.005
+
+
+def test_pilot_is_randomized_and_disjoint() -> None:
+    from src.workshop_data import FEATURES, load_pilot_data
+
+    pilot = load_pilot_data()
+    observed = load_observed_data()
+    assert len(pilot) == 5_000
+    assert set(pilot.columns) == set(observed.columns)
+    assert set(pilot["customer_id"]).isdisjoint(observed["customer_id"])
+    assert 0.45 < pilot["coupon_sent"].mean() < 0.55
+    treated = pilot[pilot["coupon_sent"] == 1]
+    control = pilot[pilot["coupon_sent"] == 0]
+    smd = (treated[FEATURES].mean() - control[FEATURES].mean()) / np.sqrt(
+        (treated[FEATURES].var() + control[FEATURES].var()) / 2
+    )
+    assert smd.abs().max() < 0.1  # a coin flip balances the groups
+
+
+def test_qini_curve_counts_incremental_purchases() -> None:
+    from solutions.causal_solution import qini_curve
+    from src.evaluation import qini_coefficient
+
+    pilot = pd.DataFrame({"coupon_sent": [1, 0, 1, 0], "purchased_7d": [1, 0, 0, 1]})
+    curve = qini_curve(pilot, np.array([0.9, 0.8, 0.7, 0.6]))
+    np.testing.assert_allclose(curve["share"], [0.25, 0.5, 0.75, 1.0])
+    np.testing.assert_allclose(curve["gain"], [1.0, 1.0, 1.0, 0.0])
+    assert qini_coefficient(curve) == pytest.approx(0.75)
+
+
+def test_pilot_prefers_logistic_over_boosting_and_the_old_ai() -> None:
+    from sklearn.linear_model import LogisticRegression
+
+    from solutions.causal_solution import make_boosting, qini_curve, t_learner_uplift
+    from src.evaluation import qini_coefficient
+    from src.workshop_data import FEATURES, load_pilot_data, split_train_test
+
+    observed = load_observed_data()
+    pilot = load_pilot_data()
+    train, _ = split_train_test(observed)
+    logistic = qini_coefficient(qini_curve(pilot, t_learner_uplift(train, pilot)[2]))
+    boosting = qini_coefficient(
+        qini_curve(pilot, t_learner_uplift(train, pilot, make_model=make_boosting)[2])
+    )
+    baseline = LogisticRegression(max_iter=2000).fit(train[FEATURES], train["purchased_7d"])
+    old_ai = qini_coefficient(qini_curve(pilot, baseline.predict_proba(pilot[FEATURES])[:, 1]))
+    assert logistic > old_ai > boosting > 0  # reference: 29.2 > 17.6 > 6.6
+
+
+def test_budget_helper_stops_at_budget_and_positive_value() -> None:
+    from src.policy import select_under_budget
+
+    profit = np.array([5.0, 4.0, -1.0, 3.0])
+    cost = np.array([2.0, 2.0, 1.0, 2.0])
+    np.testing.assert_array_equal(select_under_budget(profit, cost, 4.0), [1, 1, 0, 0])
+    np.testing.assert_array_equal(select_under_budget(profit, cost, 100.0), [1, 1, 0, 1])

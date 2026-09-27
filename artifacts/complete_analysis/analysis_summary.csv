@@ -1,0 +1,21 @@
+metric,value
+naive observed difference,0.13819725079316023
+true ATE,0.10899208430000001
+max |SMD|,0.2613575804990944
+propensity min,0.12300000589494926
+propensity max,0.5211522063630988
+"share outside [0.05, 0.95]",0.0
+mean estimated uplift,0.09767039397810286
+mean true CATE,0.10899208430000001
+correlation,0.8931120677131928
+MAE,0.026097886098500767
+"pilot Qini: T-Learner, logistic",29.2114555247723
+"pilot Qini: T-Learner, boosting",6.572044427939561
+pilot Qini: purchase probability (old AI),17.626440783464773
+pilot Qini: perfect knowledge (simulator),38.20583286899993
+customers recommended,1691.0
+budget spent,2499.8399999999997
+budget remaining,0.16000000000030923
+estimated incremental profit,927.1865659283258
+average estimated uplift among recommended,0.19702985858225952
+customers with positive estimated profit,2267.0
