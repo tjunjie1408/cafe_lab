@@ -45,6 +45,28 @@ def plot_policy_comparison(labels: list[str], values: list[float]) -> Figure:
     return fig
 
 
+def plot_qini_curves(curves: dict) -> Figure:
+    """Qini curves from ``{label: DataFrame[share, gain]}`` on randomized pilot data."""
+    from src.evaluation import qini_coefficient
+
+    fig = Figure(figsize=(7.5, 4.8))
+    ax = fig.subplots()
+    palette = [ORANGE, BLUE, GREY, PURPLE, GREEN, RED]
+    for (label, curve), color in zip(curves.items(), palette):
+        ax.plot(curve["share"], curve["gain"], color=color, linewidth=2.2,
+                label=f"{label}  (Qini {qini_coefficient(curve):.1f})")
+    last = next(iter(curves.values()))
+    ax.plot([0, 1], [0, last["gain"].iloc[-1]], color="black", linestyle="--",
+            linewidth=1, label="random line")
+    ax.axhline(0.0, color="black", linewidth=0.8)
+    ax.set_xlabel("share of pilot customers targeted (highest score first)")
+    ax.set_ylabel("incremental purchases")
+    ax.set_title("Which ranking finds the customers the coupon moves?")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
 # --- Concept diagrams ------------------------------------------------------
 
 

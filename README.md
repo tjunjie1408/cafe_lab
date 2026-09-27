@@ -25,11 +25,13 @@ coupon actually changes, and decide who should get one under a fixed budget.
    work is kept.
 2. Run the first code cell (setup). It downloads this repository into your
    Colab session.
-3. Work through the four tasks:
+3. Work through the five tasks:
    1. specify the causal question and DAG;
    2. calculate the naive observed difference;
-   3. implement a T-Learner;
-   4. build the budget-constrained targeting policy.
+   3. train a T-Learner on a train/test split, check it with held-out AUC, and
+      try gradient boosting;
+   4. score your uplift ranking with a Qini curve on a randomized pilot;
+   5. build the budget-constrained targeting policy.
 4. The *Check your policy* cell prints the numbers for your five-part
    decision memo.
 5. The reveal happens on the projector.
@@ -43,6 +45,7 @@ If Colab disconnects, reopen your Drive copy and choose
 | --- | --- |
 | `workshop.ipynb` | The notebook you work in |
 | `data/observed_data.csv` | 10,000 synthetic customers: features, coupon, purchase |
-| `src/` | Helpers the notebook imports (data loading, baseline model, plots) |
+| `data/pilot_rct.csv` | 5,000 customers from last month's pilot, where a coin flip decided who got a coupon |
+| `src/` | Helpers the notebook imports (data loading, baseline model, budget selection, Qini scoring, plots) |
 
 All data is synthetic.
