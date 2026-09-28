@@ -727,7 +727,7 @@ save_figure(fig, "11_policy_comparison.png")
 # %% [markdown]
 # ### Archetype Reveal: Who Did the Two Policies Spend the Budget On?
 #
-# Classify customers into archetypes using simulator ground truth (see rules in `docs/facilitator_archetype_review.md`):
+# Classify customers into archetypes using simulator ground truth, checking the rules in this order:
 #
 # - Negative responders: `true_cate < 0`
 # - Persuadables: `true_cate >= 0.10`
@@ -735,8 +735,8 @@ save_figure(fig, "11_policy_comparison.png")
 # - Unlikely purchasers: `true_mu1 < 0.15` and `true_cate < 0.10`
 # - Remaining: Moderate responders
 #
-# Classifications are mutually exclusive: the 228 Likely purchasers in `archetype_review` included 65 customers
-# with CATE < 0. This file assigns them to Negative responders, resulting in 163 Likely purchasers (1.6%).
+# The classes are mutually exclusive: a high-baseline customer with CATE < 0 counts as a Negative
+# responder, not a Likely purchaser, which leaves 163 Likely purchasers (1.6%).
 
 # %%
 ARCHETYPE_ORDER = [
