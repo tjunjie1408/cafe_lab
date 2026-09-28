@@ -60,12 +60,9 @@ def plot_policy_comparison(labels: list[str], values: list[float]) -> Figure:
     return fig
 
 
-def plot_qini_curves(curves: dict) -> Figure:
-    """Qini curves from ``{label: DataFrame[share, gain]}`` on randomized pilot data."""
+def _draw_qini(ax, curves: dict) -> None:
     from src.evaluation import qini_coefficient
 
-    fig = Figure(figsize=(7.5, 4.8))
-    ax = fig.subplots()
     palette = [ORANGE, BLUE, GREY, PURPLE, GREEN, RED]
     for (label, curve), color in zip(curves.items(), palette):
         ax.plot(curve["share"], curve["gain"], color=color, linewidth=2.2,
@@ -76,8 +73,126 @@ def plot_qini_curves(curves: dict) -> Figure:
     ax.axhline(0.0, color="black", linewidth=0.8)
     ax.set_xlabel("share of pilot customers targeted (highest score first)")
     ax.set_ylabel("incremental purchases")
-    ax.set_title("Which ranking finds the customers the coupon moves?")
     ax.legend(fontsize=9)
+
+
+def plot_qini_curves(curves: dict) -> Figure:
+    """Qini curves from ``{label: DataFrame[share, gain]}`` on randomized pilot data."""
+    fig = Figure(figsize=(7.5, 4.8))
+    ax = fig.subplots()
+    _draw_qini(ax, curves)
+    ax.set_title("Which ranking finds the customers the coupon moves?")
+    fig.tight_layout()
+    return fig
+
+
+# --- Results board -----------------------------------------------------------
+# The participant's closing charts. Each one uses only the participant's own
+# estimates; the facilitator's complete analysis adds the simulator truth.
+
+
+def _tidy(ax, title: str) -> None:
+    ax.set_title(title, fontweight="bold")
+    ax.grid(True, color="#E6E6E6", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+
+
+def plot_effect_summary(naive: float, uplift: np.ndarray) -> Figure:
+    """The naive gap next to the adjusted average effect, and the spread of uplift."""
+    ate = float(np.mean(uplift))
+    fig = Figure(figsize=(13, 4.6))
+    left, right = fig.subplots(1, 2, gridspec_kw={"width_ratios": [0.75, 1.25]})
+    bars = left.bar(["Naive observed\ndifference", "T-Learner\n(adjusted)"], [naive, ate],
+                    color=[GREY, BLUE], width=0.55)
+    left.bar_label(bars, labels=[f"{value:.1%}" for value in (naive, ate)], padding=4)
+    left.set_ylim(0, max(naive, ate) * 1.25)
+    left.set_ylabel("average coupon effect on purchase")
+    _tidy(left, "Adjusting for X shrinks the gap")
+
+    right.hist(uplift, bins=42, color=BLUE, alpha=0.88, edgecolor="white")
+    right.axvline(0, color="black", linewidth=1.2, linestyle="--")
+    right.axvline(ate, color=ORANGE, linewidth=2, label=f"mean {ate:.1%}")
+    right.set_xlabel("estimated uplift (mu1 - mu0)")
+    right.set_ylabel("customers")
+    right.legend()
+    _tidy(right, "The coupon moves some customers far more than others")
+    fig.tight_layout()
+    return fig
+
+
+def plot_model_check(auc: dict, curves: dict) -> Figure:
+    """Held-out AUC per model (``{name: (auc_mu0, auc_mu1)}``) beside the pilot Qini curves."""
+    fig = Figure(figsize=(15, 5.2))
+    left, right = fig.subplots(1, 2, gridspec_kw={"width_ratios": [0.8, 1.2]})
+    names = list(auc)
+    positions = np.arange(len(names))
+    mu0_auc = [auc[name][0] for name in names]
+    mu1_auc = [auc[name][1] for name in names]
+    left.bar(positions - 0.18, mu0_auc, width=0.36, color=GREY, label="mu0 (no coupon)")
+    left.bar(positions + 0.18, mu1_auc, width=0.36, color=BLUE, label="mu1 (coupon)")
+    left.set_xticks(positions, names)
+    left.set_ylim(0.5, max(mu0_auc + mu1_auc) + 0.05)
+    left.set_ylabel("AUC on the 30% held-out customers")
+    left.legend()
+    _tidy(left, "Prediction check: held-out AUC")
+
+    _draw_qini(right, curves)
+    _tidy(right, "Uplift check on the randomized pilot")
+    fig.tight_layout()
+    return fig
+
+
+def plot_budget_curve(
+    profit: np.ndarray, cost: np.ndarray, purchase_probability: np.ndarray, budget: float
+) -> Figure:
+    """Cumulative estimated profit against spend, ranked by profit vs. by purchase probability."""
+    profit, cost = np.asarray(profit), np.asarray(cost)
+    fig = Figure(figsize=(9.5, 5.4))
+    ax = fig.subplots()
+    rankings = [
+        ("Causal ranking (highest profit first)", np.argsort(-profit), ORANGE),
+        ("Old AI ranking (highest purchase probability first)",
+         np.argsort(-np.asarray(purchase_probability)), GREY),
+    ]
+    for label, order, color in rankings:
+        spend, value = np.cumsum(cost[order]), np.cumsum(profit[order])
+        at_budget = float(np.interp(budget, spend, value))
+        ax.plot(spend, value, color=color, linewidth=2.4, label=label)
+        ax.plot([budget], [at_budget], "o", color=color)
+        ax.annotate(f"{at_budget:,.0f}", (budget, at_budget), xytext=(10, 12),
+                    textcoords="offset points", va="center", color=color, fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none"))
+    ax.axvline(budget, color="black", linestyle=":", linewidth=1.5)
+    ax.text(budget, 0.03, f"  Growth Budget = {budget:,.0f}", fontsize=10, va="bottom",
+            transform=ax.get_xaxis_transform())
+    ax.axhline(0, color="black", linewidth=1)
+    ax.set_xlabel("cumulative expected coupon spend")
+    ax.set_ylabel("cumulative estimated incremental profit")
+    ax.legend(loc="upper right")
+    _tidy(ax, "Profit peaks, then falls: stop at positive value and the budget")
+    fig.tight_layout()
+    return fig
+
+
+def plot_targeting_map(
+    purchase_probability: np.ndarray, uplift: np.ndarray, recommended: np.ndarray
+) -> Figure:
+    """Every customer by purchase probability and uplift; the recommended list highlighted."""
+    x, y = np.asarray(purchase_probability), np.asarray(uplift)
+    chosen = np.asarray(recommended).astype(bool)
+    fig = Figure(figsize=(8.4, 6.1))
+    ax = fig.subplots()
+    ax.scatter(x[~chosen], y[~chosen], s=9, alpha=0.18, color=GREY,
+               label="Not recommended", edgecolors="none")
+    ax.scatter(x[chosen], y[chosen], s=18, alpha=0.72, color=ORANGE,
+               label=f"Recommended ({chosen.sum():,})", edgecolors="none")
+    ax.axhline(0, color="black", linewidth=1, linestyle="--")
+    ax.set_xlabel("predicted purchase probability")
+    ax.set_ylabel("estimated coupon uplift")
+    ax.legend(frameon=True)
+    _tidy(ax, "High purchase probability is not the same as high uplift")
     fig.tight_layout()
     return fig
 
