@@ -8,9 +8,24 @@ free of Graphviz or other system dependencies.
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
-from matplotlib.figure import Figure
+from matplotlib.figure import Figure as _MplFigure
 from matplotlib.patches import FancyBboxPatch
+
+
+class Figure(_MplFigure):
+    """A Figure that renders itself as the last expression of a notebook cell.
+
+    Without pyplot, IPython never registers matplotlib's image formatter, so a
+    bare Figure would display as ``<Figure size ...>`` text.
+    """
+
+    def _repr_png_(self) -> bytes:
+        buffer = io.BytesIO()
+        self.savefig(buffer, format="png", dpi=100, bbox_inches="tight")
+        return buffer.getvalue()
 
 BLUE = "#4472C4"
 ORANGE = "#ED7D31"
@@ -159,9 +174,9 @@ def plot_workshop_roadmap() -> Figure:
         ("Prediction", "Who is likely\nto purchase?", GREY,
          "purchase_probability\n(facilitator baseline)"),
         ("Causality", "What does the\ncoupon change?", BLUE,
-         "Task 1 DAG · Task 2 naive gap\nTask 3 T-Learner uplift"),
+         "Task 1 DAG · Task 2 naive gap\nTask 3 T-Learner · Task 4 Qini"),
         ("Policy", "Who gets a coupon\nunder the budget?", ORANGE,
-         "Task 4 incremental profit\n+ 2,500 Growth Budget"),
+         "Task 5 incremental profit\n+ 2,500 Growth Budget"),
         ("Language", "Why, and what\nstill needs proof?", GREEN,
          "Five-part\ndecision memo"),
     ]
