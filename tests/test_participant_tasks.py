@@ -159,6 +159,71 @@ def test_plots_return_figures() -> None:
     fig1 = plot_uplift_distribution(np.linspace(-0.05, 0.3, 100))
     fig2 = plot_policy_comparison(["random", "causal"], [-1000.0, 900.0])
     assert fig1.axes and fig2.axes
+    # Figures render themselves inline even in a kernel that never imported pyplot.
+    assert fig1._repr_png_().startswith(b"\x89PNG")
+
+
+def test_results_board_renders() -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from src.visualisation import (
+        plot_budget_curve,
+        plot_effect_summary,
+        plot_model_check,
+        plot_targeting_map,
+    )
+
+    rng = np.random.default_rng(0)
+    uplift = rng.normal(0.1, 0.05, 200)
+    probability = rng.uniform(0, 1, 200)
+    cost = rng.uniform(1, 3, 200)
+    curve = pd.DataFrame({"share": np.linspace(0.005, 1, 200), "gain": np.linspace(0, 20, 200)})
+    figures = [
+        plot_effect_summary(0.14, uplift),
+        plot_model_check({"logistic": (0.69, 0.68), "boosting": (0.65, 0.64)}, {"logistic": curve}),
+        plot_budget_curve(uplift * 30 - cost, cost, probability, 100.0),
+        plot_targeting_map(probability, uplift, (uplift > 0.12).astype(int)),
+    ]
+    for fig in figures:
+        assert fig._repr_png_().startswith(b"\x89PNG")
+
+
+def test_answer_notebook_is_in_sync_with_workshop() -> None:
+    from scripts.build_answer_notebook import build_answers
+
+    expected = build_answers((ROOT / "workshop.py").read_text(encoding="utf-8"))
+    committed = (ROOT / "solutions" / "workshop_answers.py").read_text(encoding="utf-8")
+    assert committed == expected, "run scripts/build_answer_notebook.py"
+
+
+def test_answer_notebook_reproduces_reference_numbers(tmp_path: Path, monkeypatch) -> None:
+    """Run the filled-in participant notebook in a participant-like folder."""
+    import runpy
+    import shutil
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    shutil.copytree(ROOT / "src", tmp_path / "src")
+    (tmp_path / "data").mkdir()
+    for name in ("observed_data.csv", "pilot_rct.csv"):
+        shutil.copy(ROOT / "data" / name, tmp_path / "data" / name)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = runpy.run_path(str(ROOT / "solutions" / "workshop_answers.py"))
+
+    from src.evaluation import qini_coefficient
+
+    np.testing.assert_allclose(result["naive"], 0.1382, atol=5e-5)
+    scores = pd.read_csv(tmp_path / "artifacts" / "customer_scores.csv")
+    assert scores.columns.tolist() == ARTIFACT_COLUMNS
+    chosen = scores["recommended"] == 1
+    assert chosen.sum() == 1_691
+    np.testing.assert_allclose(scores.loc[chosen, "expected_incremental_profit"].sum(), 927.19, atol=0.01)
+    qini = {name: qini_coefficient(curve) for name, curve in result["curves"].items()}
+    assert qini["T-Learner, logistic"] > qini["purchase probability (old AI)"] > qini["T-Learner, boosting"]
 
 
 def test_concept_diagrams_render() -> None:

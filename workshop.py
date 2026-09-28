@@ -43,9 +43,13 @@ from src.evaluation import qini_coefficient
 from src.policy import select_under_budget
 from src.predictive import fit_purchase_baseline
 from src.visualisation import (
+    plot_budget_curve,
     plot_causal_dag,
+    plot_effect_summary,
+    plot_model_check,
     plot_qini_curves,
     plot_t_learner_schematic,
+    plot_targeting_map,
     plot_uplift_archetypes,
     plot_uplift_distribution,
     plot_workshop_roadmap,
@@ -248,6 +252,33 @@ print(f"expected coupon spend:        {spend:,.2f} / {GROWTH_BUDGET:,.0f}")
 print(f"expected incremental orders:  {scores.loc[chosen, 'estimated_uplift'].sum():,.1f}")
 print(f"expected incremental profit:  {scores.loc[chosen, 'expected_incremental_profit'].sum():,.2f}")
 print(f"mean estimated uplift (ATE):  {scores['estimated_uplift'].mean():+.3f}")
+
+# %% [markdown]
+# ## Results board
+# Nothing to fill in: run these four cells once Task 5 works. Every chart is
+# built from your own model, so it shows exactly what your analysis claims.
+# Put the numbers in your decision memo.
+
+# %%
+plot_effect_summary(naive, uplift_all)
+
+# %%
+auc = {
+    "logistic": held_out_auc(test, mu0, mu1),
+    "boosting": held_out_auc(test, mu0_gb, mu1_gb),
+}
+plot_model_check(auc, curves)
+
+# %%
+plot_budget_curve(
+    scores["expected_incremental_profit"].to_numpy(),
+    observed["expected_coupon_cost"].to_numpy(),
+    scores["purchase_probability"].to_numpy(),
+    GROWTH_BUDGET,
+)
+
+# %%
+plot_targeting_map(scores["purchase_probability"], scores["estimated_uplift"], scores["recommended"])
 
 # %% [markdown]
 # ## Reveal - watch the projector
