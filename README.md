@@ -85,10 +85,15 @@ python scripts/generate_cafe_data.py
 python scripts/build_solution_artifact.py
 python -m jupytext --to ipynb workshop.py
 python -m jupytext --test workshop.py --to ipynb
+python scripts/build_answer_notebook.py
 python -m pytest -q --basetemp tmp/facilitator-check
 ```
 
-Expected result: `32 passed`.
+Expected result: `40 passed`.
+
+Live-coding answers for the four TODOs, with the output each cell should print:
+[solutions/workshop_answers.ipynb](solutions/workshop_answers.ipynb). The filled-in notebook
+is `solutions/workshop_answers.ipynb`.
 
 Full answer key with every chart (concept diagrams, confounding/overlap
 check, uplift ranking quality, budget curve, policy and archetype reveal) and
