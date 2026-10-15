@@ -1,0 +1,20 @@
+{
+  "kind": "s",
+  "features": [
+    "days_since_last_purchase",
+    "orders_30d",
+    "app_sessions_30d",
+    "average_order_value",
+    "loyalty_score",
+    "price_sensitivity",
+    "offer_affinity"
+  ],
+  "treatment": "coupon_sent",
+  "outcome": "purchased_7d",
+  "training_rows": 7000,
+  "sklearn_version": "1.9.0",
+  "numpy_version": "2.5.2",
+  "joblib_version": "1.6.0",
+  "python_version": "3.12.14",
+  "split_seed": 42
+}

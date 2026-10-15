@@ -10,8 +10,6 @@ and, when jupytext is installed, solutions/workshop_answers.ipynb.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,15 +27,13 @@ ANSWERS: list[tuple[str, str]] = [
     ),
     (  # Task 3
         """    # TODO: fit make_model() on the treated rows of train and another
-    # make_model() on the control rows, then return (mu0, mu1, uplift) for score.
+    # make_model() on the control rows, then return (model_control, model_treated).
     raise NotImplementedError""",
         """    treated = train[train["coupon_sent"] == 1]
     control = train[train["coupon_sent"] == 0]
-    model_1 = make_model().fit(treated[features], treated["purchased_7d"])
-    model_0 = make_model().fit(control[features], control["purchased_7d"])
-    mu1 = model_1.predict_proba(score[features])[:, 1]
-    mu0 = model_0.predict_proba(score[features])[:, 1]
-    return mu0, mu1, mu1 - mu0""",
+    model_treated = make_model().fit(treated[features], treated["purchased_7d"])
+    model_control = make_model().fit(control[features], control["purchased_7d"])
+    return model_control, model_treated""",
     ),
     (  # Task 4
         """    # TODO: sort the pilot by score (highest first); at every cut-off compute the
@@ -66,7 +62,7 @@ ANSWERS: list[tuple[str, str]] = [
     return pd.DataFrame(
         {
             "customer_id": df["customer_id"].to_numpy(),
-            "purchase_probability": fit_purchase_baseline(df),
+            "purchase_probability": df["purchase_probability"].to_numpy(),
             "estimated_uplift": uplift,
             "expected_incremental_profit": profit,
             "recommended": select_under_budget(profit, cost, GROWTH_BUDGET),
@@ -97,9 +93,17 @@ def main() -> None:
     TARGET.write_text(build_answers(SOURCE.read_text(encoding="utf-8")), encoding="utf-8")
     print(f"Answer source -> {TARGET.relative_to(PROJECT_ROOT)}")
     try:
-        subprocess.run([sys.executable, "-m", "jupytext", "--to", "ipynb", str(TARGET)], check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        import jupytext
+    except ImportError:
         print("jupytext unavailable: run `python -m jupytext --to ipynb` on the file yourself.")
+    else:
+        from jupytext.combine import combine_inputs_with_outputs
+
+        notebook_path = TARGET.with_suffix(".ipynb")
+        notebook = jupytext.read(TARGET)
+        if notebook_path.exists():
+            notebook = combine_inputs_with_outputs(notebook, jupytext.read(notebook_path))
+        jupytext.write(notebook, notebook_path)
 
 
 if __name__ == "__main__":

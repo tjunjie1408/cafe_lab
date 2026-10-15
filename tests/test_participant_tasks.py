@@ -235,6 +235,18 @@ def test_answer_notebook_reproduces_reference_numbers(tmp_path: Path, monkeypatc
     np.testing.assert_allclose(result["naive"], 0.1382, atol=5e-5)
     scores = pd.read_csv(tmp_path / "artifacts" / "customer_scores.csv")
     assert scores.columns.tolist() == ARTIFACT_COLUMNS
+    import joblib
+
+    bundle = joblib.load(tmp_path / "artifacts" / "models" / "t_learner.joblib")
+    observed = load_observed_data()
+    features = bundle["features"]
+    restored_uplift = (
+        bundle["model_treated"].predict_proba(observed[features])[:, 1]
+        - bundle["model_control"].predict_proba(observed[features])[:, 1]
+    )
+    np.testing.assert_allclose(restored_uplift, scores["estimated_uplift"], rtol=1e-12)
+    assert features == FEATURES
+    assert bundle["training_rows"] == 7_000
     chosen = scores["recommended"] == 1
     assert chosen.sum() == 1_691
     np.testing.assert_allclose(scores.loc[chosen, "expected_incremental_profit"].sum(), 927.19, atol=0.01)
@@ -317,11 +329,20 @@ def test_complete_analysis_matches_reference(tmp_path: Path) -> None:
         "decision_memo.md",
         "03_causal_dag.png",
         "12_archetype_reveal.png",
+        "models/t_learner.joblib",
     ]:
         assert (tmp_path / name).exists(), name
 
     observed = load_observed_data()
     reference = build_customer_scores(observed)
+    import joblib
+
+    bundle = joblib.load(tmp_path / "models" / "t_learner.joblib")
+    restored_uplift = (
+        bundle["model_treated"].predict_proba(observed[bundle["features"]])[:, 1]
+        - bundle["model_control"].predict_proba(observed[bundle["features"]])[:, 1]
+    )
+    np.testing.assert_allclose(restored_uplift, reference["estimated_uplift"], rtol=1e-12)
     chosen = reference["recommended"] == 1
     summary = pd.read_csv(tmp_path / "analysis_summary.csv").set_index("metric")["value"]
     assert summary["customers recommended"] == chosen.sum()
@@ -347,6 +368,32 @@ def test_notebook_is_participant_safe() -> None:
     assert "true_cate" not in source and "data/facilitator" not in source
     assert 'Path("artifacts").mkdir(parents=True, exist_ok=True)' in source
     assert (ROOT / "workshop.ipynb").exists()
+
+
+def test_colab_model_download_contains_both_artifacts(tmp_path: Path, monkeypatch) -> None:
+    """Exercise only the download cell with Colab's browser hook substituted."""
+    import sys
+    import types
+    import zipfile
+
+    import jupytext
+
+    model_path = tmp_path / "t_learner.joblib"
+    model_path.write_bytes(b"saved-model-placeholder")
+    model_path.with_suffix(".json").write_text('{"features": ["loyalty_score"]}', encoding="utf-8")
+    downloaded = []
+    colab = types.ModuleType("google.colab")
+    colab.files = types.SimpleNamespace(download=downloaded.append)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    notebook = jupytext.read(ROOT / "workshop.py")
+    exec(notebook.cells[-1].source, {"model_path": model_path})
+
+    archive_path = model_path.with_suffix(".zip")
+    assert downloaded == [str(archive_path.resolve())]
+    with zipfile.ZipFile(archive_path) as archive:
+        assert set(archive.namelist()) == {"t_learner.joblib", "t_learner.json"}
+        assert archive.read("t_learner.joblib") == model_path.read_bytes()
+        assert archive.read("t_learner.json") == model_path.with_suffix(".json").read_bytes()
 
 
 def test_train_test_split_is_stable_and_stratified() -> None:

@@ -5,8 +5,12 @@
 # T-Learner causal uplift estimation, ranking quality evaluation, budget-constrained targeting policy,
 # ground-truth reveal, and a decision memo into a single executable workflow.
 #
-# **Facilitator Use Only**: This file loads `data/facilitator/simulator_truth.csv`.
-# Do not share your screen or distribute this file prior to the Reveal section.
+# **After-workshop reading.** This is the full analysis behind the reveal. Unlike your
+# workshop notebook, it reads the simulator's ground truth (`data/facilitator/`):
+# every customer's true coupon effect, which no real company ever has. It also
+# contains reference answers to all five tasks, so it is shared only after the session.
+# Every number checked against truth here is a teaching check on synthetic data,
+# not evidence about a real campaign.
 #
 # Key distinctions:
 #
@@ -75,6 +79,10 @@ from src.workshop_data import (  # noqa: E402
     split_train_test,
 )
 from src.evaluation import qini_coefficient  # noqa: E402
+from src.policy import select_under_budget as _select_positive  # noqa: E402
+from src.causal_models import (  # noqa: E402
+    fit_s_learner, predict_outcomes, predict_uplift, save_bundle, load_bundle,
+)
 
 OUTPUT_DIR = Path(
     os.environ.get("CAUSAL_CAFE_OUTPUT_DIR", PROJECT_ROOT / "artifacts" / "complete_analysis")
@@ -92,6 +100,14 @@ plt.rcParams.update(
         "axes.spines.right": False,
     }
 )
+
+
+def display_path(path: Path) -> str:
+    """Print paths relative to the repository so no machine-specific folder is shown."""
+    try:
+        return Path(path).resolve().relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return Path(path).name
 
 
 def save_figure(fig: plt.Figure, filename: str) -> None:
@@ -245,13 +261,19 @@ axes[0].barh(
 for threshold in (-0.1, 0.1):
     axes[0].axvline(threshold, color="black", linestyle="--", linewidth=1)
 axes[0].axvline(0, color="black", linewidth=1)
-axes[0].set_title("Before any coupon, the two groups already differ")
+axes[0].set_title(
+    f"Pre-coupon balance: {(standardized_mean_difference.abs() > 0.1).sum()} of "
+    f"{len(FEATURES)} features have |SMD| > 0.1"
+)
 axes[0].set_xlabel("Standardized mean difference (coupon − no coupon)")
 
 bins = np.linspace(0, 1, 41)
 axes[1].hist(propensity[treatment == 0], bins=bins, alpha=0.6, color=GREY, label="No coupon", density=True)
 axes[1].hist(propensity[treatment == 1], bins=bins, alpha=0.6, color=BLUE, label="Coupon", density=True)
-axes[1].set_title("Propensity scores overlap: comparable customers exist")
+axes[1].set_title(
+    f"Propensity range {propensity.min():.2f}–{propensity.max():.2f}; "
+    f"{((propensity < 0.05) | (propensity > 0.95)).mean():.1%} outside [0.05, 0.95]"
+)
 axes[1].set_xlabel("Estimated propensity P(coupon_sent = 1 | X)")
 axes[1].set_ylabel("Density")
 axes[1].legend()
@@ -307,6 +329,13 @@ control_model = LogisticRegression(max_iter=2_000)
 treated_model.fit(treated[FEATURES], treated["purchased_7d"])
 control_model.fit(control[FEATURES], control["purchased_7d"])
 
+model_path = save_bundle(
+    {"kind": "t", "features": list(FEATURES),
+     "model_control": control_model, "model_treated": treated_model},
+    OUTPUT_DIR / "models" / "t_learner.joblib", training_rows=len(train), split_seed=42,
+)
+restored = load_bundle(model_path)
+control_model, treated_model = restored["model_control"], restored["model_treated"]
 mu1 = treated_model.predict_proba(observed[FEATURES])[:, 1]
 mu0 = control_model.predict_proba(observed[FEATURES])[:, 1]
 estimated_uplift = mu1 - mu0
@@ -325,6 +354,18 @@ uplift_diagnostics = pd.DataFrame(
 )
 uplift_diagnostics
 
+# %% [markdown]
+# ### Analyze the saved model
+# The models above were saved and reloaded before computing any uplift.
+# Diagnostics, policy scores and pilot evaluation all reuse these loaded objects.
+
+# %%
+restored_mu0 = restored["model_control"].predict_proba(observed[restored["features"]])[:, 1]
+restored_mu1 = restored["model_treated"].predict_proba(observed[restored["features"]])[:, 1]
+np.testing.assert_allclose(restored_mu0, mu0, rtol=1e-12)
+np.testing.assert_allclose(restored_mu1, mu1, rtol=1e-12)
+print(f"Saved and reloaded: {display_path(model_path)} ({model_path.stat().st_size:,} bytes)")
+
 # %%
 fig, axes = plt.subplots(1, 3, figsize=(17, 4.8), gridspec_kw={"width_ratios": [0.8, 1, 1]})
 
@@ -333,7 +374,9 @@ ate_values = [naive_difference, estimated_ate, true_ate]
 ate_bars = axes[0].bar(ate_labels, ate_values, color=[GREY, BLUE, GREEN], width=0.62)
 axes[0].bar_label(ate_bars, labels=[f"{value:.1%}" for value in ate_values], padding=4)
 axes[0].set_ylim(0, max(ate_values) * 1.25)
-axes[0].set_title("Adjusting for X removes most of the bias")
+axes[0].set_title(
+    f"Bias vs. truth: naive {naive_difference - true_ate:+.1%}, adjusted {estimated_ate - true_ate:+.1%}"
+)
 axes[0].set_ylabel("Average coupon effect on purchase")
 
 axes[1].hist(estimated_uplift, bins=42, color=BLUE, alpha=0.88, edgecolor="white")
@@ -360,7 +403,9 @@ limits = [
 axes[2].plot(limits, limits, color=ORANGE, linestyle="--", linewidth=1.6, label="Perfect fit")
 axes[2].set_xlim(limits)
 axes[2].set_ylim(limits)
-axes[2].set_title("Estimated uplift tracks simulator truth")
+axes[2].set_title(
+    f"Estimated vs. true CATE: r = {np.corrcoef(estimated_uplift, true_cate)[0, 1]:.2f}"
+)
 axes[2].set_xlabel("True CATE (teaching data only)")
 axes[2].set_ylabel("Estimated uplift")
 axes[2].legend()
@@ -396,7 +441,10 @@ axes[0].bar(positions - 0.2, calibration["estimated"], width=0.4, color=BLUE, la
 axes[0].bar(positions + 0.2, calibration["true"], width=0.4, color=GREEN, label="True CATE")
 axes[0].axhline(0, color="black", linewidth=1)
 axes[0].set_xticks(positions)
-axes[0].set_title("Uplift deciles are well calibrated")
+axes[0].set_title(
+    "Decile calibration: max gap "
+    f"{(calibration['estimated'] - calibration['true']).abs().max():.3f}"
+)
 axes[0].set_xlabel("Estimated-uplift decile (1 = lowest, 10 = highest)")
 axes[0].set_ylabel("Mean effect on purchase probability")
 axes[0].legend()
@@ -405,7 +453,7 @@ axes[1].plot(targeted_share, cumulative_true_gain(true_cate), color=GREEN, lines
 axes[1].plot(targeted_share, cumulative_true_gain(estimated_uplift), color=ORANGE, linewidth=2.4, label="T-Learner uplift")
 axes[1].plot(targeted_share, cumulative_true_gain(purchase_probability), color=GREY, linewidth=2.2, label="Purchase probability")
 axes[1].plot([0, 1], [0, true_cate.sum()], color="black", linestyle="--", linewidth=1, label="Random")
-axes[1].set_title("Uplift ranking finds incremental buyers faster")
+axes[1].set_title("Cumulative true incremental purchases by ranking")
 axes[1].set_xlabel("Share of customers targeted (sorted by score)")
 axes[1].set_ylabel("Cumulative true incremental purchases")
 axes[1].xaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value:.0%}"))
@@ -421,8 +469,8 @@ save_figure(fig, "08_uplift_ranking_quality.png")
 # comparable and a Qini curve scores the uplift ranking directly: at each cut-off,
 # treated buyers minus control buyers scaled to the treated count.
 #
-# The more flexible gradient-boosting T-Learner loses on both checks: each arm's
-# model overfits, and the difference of two noisy models is noisier still.
+# Compare training and held-out AUC as well as pilot Qini. A large generalization
+# gap is evidence of overfitting; model complexity alone does not establish it.
 
 # %%
 def make_logistic():
@@ -457,18 +505,37 @@ test_outcome = test["purchased_7d"].to_numpy()
 baseline_on_train = LogisticRegression(max_iter=2_000).fit(train[FEATURES], train["purchased_7d"])
 
 model_rows, pilot_curves = [], {}
-for name, make_model in [("T-Learner, logistic", make_logistic), ("T-Learner, boosting", make_boosting)]:
-    arm0, arm1 = fit_arm_models(make_model)
-    pilot_uplift = arm1.predict_proba(pilot[FEATURES])[:, 1] - arm0.predict_proba(pilot[FEATURES])[:, 1]
+gb0, gb1 = fit_arm_models(make_boosting)
+gb_path = save_bundle(
+    {"kind": "t", "features": list(FEATURES), "model_control": gb0, "model_treated": gb1},
+    OUTPUT_DIR / "models" / "t_learner_boosting.joblib", training_rows=len(train), split_seed=42,
+)
+s_path = save_bundle(
+    fit_s_learner(train, FEATURES), OUTPUT_DIR / "models" / "s_learner.joblib",
+    training_rows=len(train), split_seed=42,
+)
+candidate_bundles = {
+    "T-Learner, logistic": restored,
+    "T-Learner, boosting": load_bundle(gb_path),
+    "S-Learner, logistic + interactions": load_bundle(s_path),
+}
+for name, bundle in candidate_bundles.items():
+    test_mu0, test_mu1 = predict_outcomes(bundle, test)
+    train_mu0, train_mu1 = predict_outcomes(bundle, train)
+    train_treated = train["coupon_sent"].to_numpy() == 1
+    train_outcome = train["purchased_7d"].to_numpy()
+    pilot_uplift = predict_uplift(bundle, pilot)
     pilot_curves[name] = qini_curve(pilot, pilot_uplift)
     model_rows.append(
         {
             "model": name,
+            "training AUC mu0": roc_auc_score(train_outcome[~train_treated], train_mu0[~train_treated]),
+            "training AUC mu1": roc_auc_score(train_outcome[train_treated], train_mu1[train_treated]),
             "held-out AUC mu0": roc_auc_score(
-                test_outcome[~test_treated], arm0.predict_proba(test.loc[~test_treated, FEATURES])[:, 1]
+                test_outcome[~test_treated], test_mu0[~test_treated]
             ),
             "held-out AUC mu1": roc_auc_score(
-                test_outcome[test_treated], arm1.predict_proba(test.loc[test_treated, FEATURES])[:, 1]
+                test_outcome[test_treated], test_mu1[test_treated]
             ),
             "pilot Qini": qini_coefficient(pilot_curves[name]),
         }
@@ -483,20 +550,47 @@ model_check = pd.DataFrame(model_rows)
 model_check.to_csv(OUTPUT_DIR / "model_check.csv", index=False)
 model_check
 
+# %% [markdown]
+# ### Are the T-Learner and S-Learner really tied? Check against the truth
+#
+# The pilot Qini can only rank the candidates on 5,000 randomized customers. The simulator
+# lets us go one step further: compare each candidate's uplift with every customer's true
+# effect, and spend the same budget with each candidate's ranking. This is possible only
+# on synthetic data.
+
+# %%
+candidate_truth_rows = []
+for name, bundle in candidate_bundles.items():
+    candidate_uplift = predict_uplift(bundle, observed)
+    candidate_pick = _select_positive(candidate_uplift * margin - coupon_cost, coupon_cost, GROWTH_BUDGET) == 1
+    candidate_truth_rows.append(
+        {
+            "model": name,
+            "mean estimated uplift": candidate_uplift.mean(),
+            "correlation with true CATE": np.corrcoef(candidate_uplift, true_cate)[0, 1],
+            "MAE vs true CATE": np.abs(candidate_uplift - true_cate).mean(),
+            "customers picked": int(candidate_pick.sum()),
+            "true incremental profit": float((true_cate * margin - coupon_cost)[candidate_pick].sum()),
+        }
+    )
+candidate_truth = pd.DataFrame(candidate_truth_rows).set_index("model")
+candidate_truth.to_csv(OUTPUT_DIR / "candidate_truth_check.csv")
+candidate_truth.round(3)
+
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), gridspec_kw={"width_ratios": [0.8, 1.2]})
 auc_table = model_check.dropna(subset=["held-out AUC mu0"]).set_index("model")
 positions = np.arange(len(auc_table))
 axes[0].bar(positions - 0.18, auc_table["held-out AUC mu0"], width=0.36, color=GREY, label="mu0 (no coupon)")
 axes[0].bar(positions + 0.18, auc_table["held-out AUC mu1"], width=0.36, color=BLUE, label="mu1 (coupon)")
-axes[0].set_xticks(positions, [name.replace("T-Learner, ", "") for name in auc_table.index])
+axes[0].set_xticks(positions, ["T-logistic", "T-boosting", "S-logistic"], fontsize=9)
 axes[0].set_ylim(0.5, 0.75)
 axes[0].set_ylabel("AUC on the 30% held-out customers")
-axes[0].set_title("Prediction check: the simpler model is more accurate")
+axes[0].set_title("Held-out purchase prediction")
 axes[0].legend()
 
-colors = [ORANGE, BLUE, GREY, GREEN]
-styles = ["-", "-", "-", ":"]
+styles = ["-", "--", "-.", "-", ":"]
+colors = [BLUE, ORANGE, PURPLE, GREY, GREEN]
 for (name, curve), color, style in zip(pilot_curves.items(), colors, styles):
     axes[1].plot(curve["share"], curve["gain"], color=color, linestyle=style, linewidth=2.2,
                  label=f"{name} (Qini {qini_coefficient(curve):.1f})")
@@ -524,32 +618,18 @@ expected_incremental_profit = estimated_uplift * margin - coupon_cost
 true_incremental_profit = true_cate * margin - coupon_cost
 
 
-def select_under_budget(
-    rank_score: np.ndarray,
-    cost: np.ndarray,
-    budget: float,
-    *,
-    require_positive: bool = False,
-) -> np.ndarray:
-    """Greedy selection by descending score without exceeding the budget.
+def select_under_budget(rank_score: np.ndarray, cost: np.ndarray, budget: float) -> np.ndarray:
+    """The same `src.policy.select_under_budget` your workshop notebook used, as a boolean mask.
 
-    With ``require_positive`` the score is treated as expected profit and the
-    walk stops at the first non-positive value.
+    It walks customers from the highest score down, skips anyone who no longer fits
+    the budget, and stops at the first non-positive score. Purchase probabilities and
+    random draws are always positive, so the same helper also ranks the old AI and the
+    random policy below.
     """
-    selected = np.zeros(len(rank_score), dtype=bool)
-    spent = 0.0
-    for index in np.argsort(-rank_score):
-        if require_positive and rank_score[index] <= 0:
-            break
-        if spent + cost[index] <= budget:
-            selected[index] = True
-            spent += cost[index]
-    return selected
+    return _select_positive(np.asarray(rank_score), cost, budget).astype(bool)
 
 
-selected = select_under_budget(
-    expected_incremental_profit, coupon_cost, GROWTH_BUDGET, require_positive=True
-)
+selected = select_under_budget(expected_incremental_profit, coupon_cost, GROWTH_BUDGET)
 
 scores = pd.DataFrame(
     {
@@ -592,6 +672,11 @@ policy_summary
 #
 # Accumulate customers in descending order of expected incremental profit. Estimated cumulative profit initially rises, peaking where incremental profit turns negative;
 # the portion within the budget limit constitutes the final targeting list. The grey curve illustrates targeting by purchase probability under the exact same spend.
+#
+# **Comparing with your workshop notebook:** there, both curves were *estimated* profit, so the
+# old AI's line ended near −1,009. Here the grey and green curves use the simulator's *true*
+# profit, so the old AI ends near −946 and the causal list near +845 instead of the estimated +927.
+# The orange curve is the same estimate you saw in the workshop.
 
 # %%
 causal_order = np.argsort(-expected_incremental_profit)
@@ -670,9 +755,7 @@ save_figure(fig, "10_targeting_map.png")
 
 # %%
 predictive_selected = select_under_budget(purchase_probability, coupon_cost, GROWTH_BUDGET)
-oracle_selected = select_under_budget(
-    true_incremental_profit, coupon_cost, GROWTH_BUDGET, require_positive=True
-)
+oracle_selected = select_under_budget(true_incremental_profit, coupon_cost, GROWTH_BUDGET)
 random_rng = np.random.default_rng(2026)
 random_values = [
     true_incremental_profit[
@@ -720,7 +803,7 @@ bars = ax.bar(
 ax.axhline(0, color="black", linewidth=1)
 ax.bar_label(bars, labels=[f"{'-' if value < 0 else ''}${abs(value):,.0f}" for value in values], padding=4)
 ax.margins(y=0.15)
-ax.set_title("Under the same budget, causal targeting captures real value")
+ax.set_title(f"True incremental profit under the same {GROWTH_BUDGET:,.0f} budget")
 ax.set_ylabel("True incremental profit (simulator evaluation)")
 save_figure(fig, "11_policy_comparison.png")
 
@@ -860,7 +943,7 @@ print(f"Input rows: {len(observed):,}")
 print(f"Recommended customers: {selected.sum():,}")
 print(f"Budget spent: ${budget_spent:,.2f} / ${GROWTH_BUDGET:,.2f}")
 print(f"Estimated incremental profit: ${estimated_policy_profit:,.2f}")
-print(f"Outputs written to: {OUTPUT_DIR}")
+print(f"Outputs written to: {display_path(OUTPUT_DIR)}")
 
 # %% [markdown]
 # ## 10. Decision Memo (Reference Solution, Auto-Populated)
@@ -905,6 +988,10 @@ probability; it spends the budget on customers who would buy anyway.
   scored a Qini of {model_check.set_index("model").loc["T-Learner, logistic", "pilot Qini"]:.1f},
   against {model_check.set_index("model").loc["T-Learner, boosting", "pilot Qini"]:.1f} for gradient boosting and
   {model_check.set_index("model").loc["purchase probability (old AI)", "pilot Qini"]:.1f} for purchase probability.
+  The S-Learner (logistic with coupon interactions) scored
+  {model_check.set_index("model").loc["S-Learner, logistic + interactions", "pilot Qini"]:.1f}, practically tied;
+  the gap is within what a different pilot sample could produce, and choosing a model
+  on this pilot would use up the pilot as an independent check.
 - Run a randomized holdout inside the recommended list before scaling.
 - Check calibration of the profit estimate: in the synthetic check the realised
   value was ${causal_true_value:,.2f} against ${estimated_policy_profit:,.2f}
