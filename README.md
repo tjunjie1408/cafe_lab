@@ -89,7 +89,7 @@ python scripts/build_answer_notebook.py
 python -m pytest -q --basetemp tmp/facilitator-check
 ```
 
-Expected result: `40 passed`.
+Expected result: `41 passed`.
 
 Live-coding answers for the four TODOs, with the output each cell should print:
 [solutions/TODO_ANSWERS.md](solutions/TODO_ANSWERS.md). The filled-in notebook

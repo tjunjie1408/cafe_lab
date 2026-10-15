@@ -23,6 +23,35 @@ Prints `naive observed difference: 0.1381972...`
 Say: this is 13.8 points, but coupons went to likely buyers, so it is not the
 ATE. The simulator's true ATE is 10.9 (keep that for the reveal).
 
+### Provided cells before and after Task 2 (no TODO)
+
+*Meet the data* prints customers `10,000`, share sent a coupon `0.297`, 7-day
+purchase rate `0.238`, mean order margin `10.691`, mean coupon cost `1.655`,
+cost to coupon everyone `16,550.32`, Growth Budget `2,500`. Answers: the budget
+pays for about 15% of a full campaign, so the order of selection matters;
+break-even uplift ≈ 1.655 / 10.691 ≈ 15 points.
+
+*Balance and overlap* prints:
+
+```text
+                          no coupon  coupon    SMD
+days_since_last_purchase     28.050  24.453 -0.183
+orders_30d                    2.290   2.647  0.198
+app_sessions_30d              4.510   5.026  0.191
+average_order_value          14.624  15.378  0.198
+loyalty_score                 0.507   0.565  0.261
+price_sensitivity             0.501   0.491 -0.048
+offer_affinity                0.502   0.506  0.023
+propensity range:           0.12 - 0.52
+share outside [0.05, 0.95]: 0.0%
+```
+
+Answers: the five history features are imbalanced, all in the direction of
+better customers getting coupons, so the naive gap overstates the effect. The
+two response traits are balanced; they stay in the model because they change
+how much the coupon helps (effect modifiers in the DAG). Overlap holds across
+the whole range.
+
 ## Task 3 — T-Learner
 
 ```python
@@ -39,9 +68,17 @@ def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
 The cells after it print:
 
 ```text
+mean uplift:            +0.099
+share with uplift < 0:  4.1%
+share above break-even: 22.9%
 logistic  AUC mu0 0.688 · mu1 0.684
 boosting  AUC mu0 0.646 · mu1 0.636
 ```
+
+Interpretation answers: adjusting moved the average from 0.138 down to about
+0.099, as the balance table predicted. The average customer is below the
+~15-point break-even, but about 23% are above it, and the budget only covers
+about 15%, so a ranked campaign can still make money.
 
 Common mistakes:
 
@@ -131,7 +168,8 @@ instead of `uplift_all` (all 10,000). The notebook already passes
 ## Results board (no TODO)
 
 Four charts built only from the participant's own output, mirroring the
-complete analysis without the simulator truth:
+complete analysis without the simulator truth. Each chart is followed by one or
+two interpretation questions:
 
 | Results board | Complete analysis equivalent | What to read off |
 | --- | --- | --- |
@@ -139,6 +177,35 @@ complete analysis without the simulator truth:
 | `plot_model_check` | `08b_holdout_auc_vs_pilot_qini.png` | logistic wins on AUC *and* pilot Qini |
 | `plot_budget_curve` | `09_budget_curve.png` | estimated profit at the budget: **+927** causal vs **−1,009** old AI |
 | `plot_targeting_map` | `10_targeting_map.png` | the 1,691 recommended are high-uplift, not high-probability |
+
+Question answers: about 4 of the 13.8 points were confounding; the spread is
+wide, so one average effect cannot pick customers. Both checks agree here, but
+if they disagreed, trust the pilot Qini: AUC scores purchase, not uplift. The
+orange curve peaks beyond the budget line, so the budget binds. The grey curve
+falls because likely buyers buy anyway and carry the largest coupon cost.
+
+*Who did each list pick?* prints:
+
+```text
+                              causal list  old AI list
+customers                        1691.000      962.000
+spend                            2499.840     2500.000
+mean coupon cost                    1.478        2.599
+mean purchase probability           0.256        0.508
+mean estimated uplift               0.197        0.118
+estimated incremental profit      927.187    -1009.340
+```
+
+Answer: the old AI's customers buy twice as often, but the coupon moves them
+less and costs 75% more each, so it fills a budget with fewer, costlier,
+less-persuadable customers. The high-probability, low-uplift corner of the
+targeting map is the "Likely purchasers" box from the archetype diagram. The
+orange curve peaks where estimated profit turns negative, after 2,267
+positive-value customers, beyond the 1,691 the budget pays for.
+
+The memo cell is a template with `___` blanks; each blank names the cell that
+supplies the number. Compare filled memos with
+`artifacts/complete_analysis/decision_memo.md`.
 
 Then switch to the projector for the truth: `11_policy_comparison.png`
 (causal **+$845**, old AI **−$946**, random −$715, oracle +$1,029) and
