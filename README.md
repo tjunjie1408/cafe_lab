@@ -29,12 +29,18 @@ coupon actually changes, and decide who should get one under a fixed budget.
    1. specify the causal question and DAG;
    2. calculate the naive observed difference;
    3. train a T-Learner on a train/test split, check it with held-out AUC, and
-      try gradient boosting;
+      compare gradient boosting and an S-Learner with explicit treatment interactions;
    4. score your uplift ranking with a Qini curve on a randomized pilot;
    5. build the budget-constrained targeting policy.
 4. The *Check your policy* cell prints the numbers for your five-part
    decision memo.
-5. The reveal happens on the projector.
+5. Run the final download cell to save your trained T-Learner as a ZIP containing
+   the fitted models and JSON metadata with feature order and package versions.
+6. The reveal happens on the projector.
+
+The notebook keeps four coding TODOs. Each candidate is trained once, saved,
+and reloaded before evaluation. Held-out checks, pilot Qini curves, and the
+campaign policy use predictions from those loaded models.
 
 If Colab disconnects, reopen your Drive copy and choose
 **Runtime → Run all**; the setup cell fetches the files again.
@@ -47,5 +53,10 @@ If Colab disconnects, reopen your Drive copy and choose
 | `data/observed_data.csv` | 10,000 synthetic customers: features, coupon, purchase |
 | `data/pilot_rct.csv` | 5,000 customers from last month's pilot, where a coin flip decided who got a coupon |
 | `src/` | Helpers the notebook imports (data loading, baseline model, budget selection, Qini scoring, plots) |
+| `src/causal_models.py` | S-Learner, model persistence, and prediction helpers |
+
+The notebook creates `artifacts/customer_scores.csv` and three model bundles
+under `artifacts/models/`: logistic T-Learner, boosting T-Learner, and S-Learner.
+The final Colab cell downloads the logistic T-Learner bundle and its metadata.
 
 All data is synthetic.
