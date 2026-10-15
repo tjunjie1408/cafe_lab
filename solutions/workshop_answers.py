@@ -44,6 +44,7 @@ from src.workshop_data import (
 from src.evaluation import qini_coefficient
 from src.policy import select_under_budget
 from src.predictive import fit_purchase_baseline
+from src.causal_models import fit_s_learner, predict_outcomes, predict_uplift, save_bundle, load_bundle
 from src.visualisation import (
     plot_budget_curve,
     plot_causal_dag,
@@ -199,9 +200,10 @@ print(f"train: {len(train):,} customers · test: {len(test):,} customers")
 
 # %% [markdown]
 # Split `train` by `coupon_sent`, fit one outcome model per arm on FEATURES,
-# then predict mu0 and mu1 for every customer in `score` and take
-# uplift = mu1 - mu0. `make_model` builds a fresh, untrained model each time you
-# call it, so the same function works with any scikit-learn classifier.
+# and return the fitted control model first, then the treated model. Keep these
+# models so they can be saved and reused without training again. The provided
+# prediction function computes mu0, mu1 and uplift = mu1 - mu0.
+# `make_model` builds a fresh classifier each time you call it.
 
 # %%
 plot_t_learner_schematic()
@@ -211,17 +213,34 @@ def make_logistic():
     return LogisticRegression(max_iter=2000)
 
 
-def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
+def fit_t_learner(train, features=FEATURES, make_model=make_logistic):
     treated = train[train["coupon_sent"] == 1]
     control = train[train["coupon_sent"] == 0]
-    model_1 = make_model().fit(treated[features], treated["purchased_7d"])
-    model_0 = make_model().fit(control[features], control["purchased_7d"])
-    mu1 = model_1.predict_proba(score[features])[:, 1]
-    mu0 = model_0.predict_proba(score[features])[:, 1]
+    model_treated = make_model().fit(treated[features], treated["purchased_7d"])
+    model_control = make_model().fit(control[features], control["purchased_7d"])
+    return model_control, model_treated
+
+
+def predict_t_learner(model_control, model_treated, score, features=FEATURES):
+    mu0 = model_control.predict_proba(score[features])[:, 1]
+    mu1 = model_treated.predict_proba(score[features])[:, 1]
     return mu0, mu1, mu1 - mu0
 
 
-mu0, mu1, uplift = t_learner_uplift(train, test)
+def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
+    model_control, model_treated = fit_t_learner(train, features, make_model)
+    return predict_t_learner(model_control, model_treated, score, features)
+
+
+model_control, model_treated = fit_t_learner(train)
+model_path = save_bundle(
+    {"kind": "t", "features": list(FEATURES),
+     "model_control": model_control, "model_treated": model_treated},
+    Path("artifacts/models/t_learner.joblib"), training_rows=len(train), split_seed=42,
+)
+restored = load_bundle(model_path)
+model_control, model_treated = restored["model_control"], restored["model_treated"]
+mu0, mu1, uplift = predict_t_learner(model_control, model_treated, test)
 plot_uplift_distribution(uplift)
 
 # %%
@@ -259,8 +278,32 @@ def make_boosting():
     return HistGradientBoostingClassifier(random_state=0)
 
 
-mu0_gb, mu1_gb, uplift_gb = t_learner_uplift(train, test, make_model=make_boosting)
+gb_control, gb_treated = fit_t_learner(train, make_model=make_boosting)
+gb_path = save_bundle(
+    {"kind": "t", "features": list(FEATURES),
+     "model_control": gb_control, "model_treated": gb_treated},
+    Path("artifacts/models/t_learner_boosting.joblib"), training_rows=len(train), split_seed=42,
+)
+boosting_bundle = load_bundle(gb_path)
+mu0_gb, mu1_gb = predict_outcomes(boosting_bundle, test)
+uplift_gb = mu1_gb - mu0_gb
 print("boosting  AUC mu0 %.3f · mu1 %.3f" % held_out_auc(test, mu0_gb, mu1_gb))
+
+# %% [markdown]
+# ### S-Learner: one model, two treatment settings
+# One classifier learns from X, coupon_sent, and explicit X * coupon_sent
+# interactions. Predict each customer twice, holding X fixed and setting the
+# coupon indicator first to 0, then 1. Compare this with the two-model T-Learner.
+# All candidates are saved and reloaded before evaluation; evaluation never fits.
+
+# %%
+s_path = save_bundle(
+    fit_s_learner(train, FEATURES), Path("artifacts/models/s_learner.joblib"),
+    training_rows=len(train), split_seed=42,
+)
+s_bundle = load_bundle(s_path)
+mu0_s, mu1_s = predict_outcomes(s_bundle, test)
+print("S-Learner AUC mu0 %.3f · mu1 %.3f" % held_out_auc(test, mu0_s, mu1_s))
 
 # %% [markdown]
 # ### Stretch (finished early?) break the DAG on purpose
@@ -307,15 +350,17 @@ def qini_curve(pilot, score):
 
 baseline_model = LogisticRegression(max_iter=2000).fit(train[FEATURES], train["purchased_7d"])
 curves = {
-    "T-Learner, logistic": qini_curve(pilot, t_learner_uplift(train, pilot)[2]),
-    "T-Learner, boosting": qini_curve(pilot, t_learner_uplift(train, pilot, make_model=make_boosting)[2]),
+    "T-Learner, logistic": qini_curve(pilot, predict_uplift(restored, pilot)),
+    "T-Learner, boosting": qini_curve(pilot, predict_uplift(boosting_bundle, pilot)),
+    "S-Learner, logistic + interactions": qini_curve(pilot, predict_uplift(s_bundle, pilot)),
     "purchase probability (old AI)": qini_curve(pilot, baseline_model.predict_proba(pilot[FEATURES])[:, 1]),
 }
 plot_qini_curves(curves)
 
 # %% [markdown]
 # The dashed line is random targeting (Qini 0). Which model won on AUC? Which
-# one won on the pilot? Use the winner from here on.
+# one won on the pilot? For the shared classroom reference we keep the logistic
+# T-Learner policy below. Model selection would require a separate final evaluation.
 
 # %% [markdown]
 # ## Task 5 - Campaign policy and decision memo
@@ -334,7 +379,7 @@ def build_customer_scores(df, uplift):
     return pd.DataFrame(
         {
             "customer_id": df["customer_id"].to_numpy(),
-            "purchase_probability": fit_purchase_baseline(df),
+            "purchase_probability": df["purchase_probability"].to_numpy(),
             "estimated_uplift": uplift,
             "expected_incremental_profit": profit,
             "recommended": select_under_budget(profit, cost, GROWTH_BUDGET),
@@ -342,11 +387,22 @@ def build_customer_scores(df, uplift):
     )[ARTIFACT_COLUMNS]
 
 
-uplift_all = t_learner_uplift(train, observed)[2]
+uplift_all = predict_t_learner(model_control, model_treated, observed)[2]
 scores = build_customer_scores(observed, uplift_all)
 Path("artifacts").mkdir(parents=True, exist_ok=True)
 scores.to_csv("artifacts/customer_scores.csv", index=False)
 scores.head()
+
+# %% [markdown]
+# ### Check the loaded model used by your policy
+# Task 3 already saved and loaded the models. The policy above and all plots
+# below use those loaded models' predictions. The final Colab cell downloads
+# the fitted logistic T-Learner and its version metadata.
+
+# %%
+restored_uplift = predict_uplift(restored, observed)
+np.testing.assert_allclose(restored_uplift, uplift_all, rtol=1e-12)
+print(f"Saved and reloaded: {model_path} ({model_path.stat().st_size:,} bytes)")
 
 # %% [markdown]
 # ### Check your policy
@@ -381,6 +437,7 @@ plot_effect_summary(naive, uplift_all)
 auc = {
     "logistic": held_out_auc(test, mu0, mu1),
     "boosting": held_out_auc(test, mu0_gb, mu1_gb),
+    "S-Learner": held_out_auc(test, mu0_s, mu1_s),
 }
 plot_model_check(auc, curves)
 
@@ -467,3 +524,26 @@ list_profile
 # **5. What still needs validation.** Pilot Qini: logistic ___, boosting ___,
 # old AI ___ [Task 4]. Before scaling: ___ (for example, a randomized holdout
 # inside the recommended list).
+
+# %% [markdown]
+# ## Download your trained model (Google Colab)
+# Run this after completing all four TODOs. The ZIP contains both fitted models
+# in one joblib bundle and a readable JSON with feature order and versions.
+# To predict later: load the bundle, select its `features` in order, and subtract
+# control-model purchase probability from treated-model purchase probability.
+# Use the recorded package versions and load only model files you trust.
+
+# %%
+import zipfile
+
+model_archive = model_path.with_suffix(".zip")
+with zipfile.ZipFile(model_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.write(model_path, arcname=model_path.name)
+    archive.write(model_path.with_suffix(".json"), arcname=model_path.with_suffix(".json").name)
+
+try:
+    from google.colab import files
+except ImportError:
+    print(f"Model download ready: {model_archive.resolve()}")
+else:
+    files.download(str(model_archive.resolve()))

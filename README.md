@@ -22,7 +22,9 @@ The conceptual framework is:
 Requires **Python 3.12**. Direct dependencies are pinned in
 [`requirements.txt`](requirements.txt), with a full transitive lock in
 [`requirements.lock.txt`](requirements.lock.txt) for an identical, verified
-facilitator environment.
+base workshop environment. The optional instructor study adds the packages in
+`requirements-instructor.txt`; its executed environment is frozen in
+`artifacts/causal_study_20261015/environment.lock.txt`.
 
 Guaranteed path — standard library only, no extra tooling to install:
 
@@ -30,7 +32,8 @@ Guaranteed path — standard library only, no extra tooling to install:
 py -3.12 -m venv .venv                 # Windows;  python3.12 -m venv .venv on macOS/Linux
 .venv\Scripts\activate                 # Windows;  source .venv/bin/activate on macOS/Linux
 python -m pip install -r requirements.txt
-python -m pytest -q --basetemp tmp/check  # optional: 32 checks should pass
+python -m pip install -r requirements-instructor.txt  # facilitator algorithms and execution tools
+python -m pytest -q --basetemp tmp/check
 ```
 
 If the Windows `py` launcher is unavailable, run the first command with an
@@ -89,7 +92,9 @@ python scripts/build_answer_notebook.py
 python -m pytest -q --basetemp tmp/facilitator-check
 ```
 
-Expected result: `41 passed`.
+The complete instructor environment currently passes `54` checks, including
+reconciliation of all 240 saved study cases. The artifact audit is skipped
+until the full study has been run.
 
 Live-coding answers for the four TODOs, with the output each cell should print:
 [solutions/TODO_ANSWERS.md](solutions/TODO_ANSWERS.md). The filled-in notebook
@@ -103,8 +108,57 @@ an auto-filled decision memo, written to `artifacts/complete_analysis/`:
 python solutions/causal_cafe_complete.py
 ```
 
+After-workshop reading for participants: one HTML page that combines the
+complete analysis and the Causal Forest appendix, with a contents section. It
+contains simulator truth and every task answer, so hand it out only after the
+session. Rebuild it from the executed notebooks:
+
+```powershell
+python scripts/execute_answer_notebooks.py
+python scripts/export_reading_html.py   # -> artifacts/reading/causal_cafe_reading.html
+```
+
+Both answer workflows now save their fitted T-Learner, without retraining for
+export. `solutions/workshop_answers.ipynb` writes `artifacts/models/t_learner.joblib`;
+the complete analysis writes `artifacts/complete_analysis/models/t_learner.joblib`
+(or below `CAUSAL_CAFE_OUTPUT_DIR`). Each bundle contains the control and treated
+models, ordered features, training row count, and package versions, with matching
+readable `.json` metadata. A save/load prediction check runs before continuing.
+
+The participant `workshop.ipynb` keeps its four TODOs. Once they are filled in,
+it saves the same model bundle and its last cell downloads `t_learner.zip` in
+Google Colab. This is a local notebook update; Colab opened from GitHub will use
+the revised cells only after the participant notebook is published to `main`.
+
+Reuse your own saved model with the recorded package versions:
+
+```python
+import joblib
+from src.workshop_data import load_observed_data
+
+bundle = joblib.load("artifacts/models/t_learner.joblib")
+customers = load_observed_data()
+features = customers[bundle["features"]]
+mu0 = bundle["model_control"].predict_proba(features)[:, 1]
+mu1 = bundle["model_treated"].predict_proba(features)[:, 1]
+uplift = mu1 - mu0
+```
+
 
 ## Repository map
+
+### Instructor robustness study
+
+Install `requirements-instructor.txt` into the project environment, then run
+`python scripts/run_causal_study.py` and `python scripts/render_causal_study.py`.
+The study reports every size × seed × scenario combination and an additional
+paired hidden-variable audit. See `artifacts/causal_study_20261015/PLAN.md` for
+the fixed protocol and `REVIEW.md` in that directory for the executed findings.
+The participant notebook is not executed by the study runner.
+Use `python scripts/sync_workshop_notebooks.py` to synchronize all notebook
+sources and `python scripts/execute_answer_notebooks.py` to execute only the
+three filled-in instructor notebooks. Executed copies retain their figures
+under `artifacts/causal_study_20261015/executed/`.
 
 | Path | Responsibility |
 | --- | --- |

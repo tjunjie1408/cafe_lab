@@ -55,15 +55,20 @@ the whole range.
 ## Task 3 — T-Learner
 
 ```python
-def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
+def fit_t_learner(train, features=FEATURES, make_model=make_logistic):
     treated = train[train["coupon_sent"] == 1]
     control = train[train["coupon_sent"] == 0]
-    model_1 = make_model().fit(treated[features], treated["purchased_7d"])
-    model_0 = make_model().fit(control[features], control["purchased_7d"])
-    mu1 = model_1.predict_proba(score[features])[:, 1]
-    mu0 = model_0.predict_proba(score[features])[:, 1]
-    return mu0, mu1, mu1 - mu0
+    model_treated = make_model().fit(treated[features], treated["purchased_7d"])
+    model_control = make_model().fit(control[features], control["purchased_7d"])
+    return model_control, model_treated
 ```
+
+The provided `predict_t_learner` returns `(mu0, mu1, uplift)`; the convenience
+function `t_learner_uplift` still trains and predicts in one call for the optional
+stretch experiment. Task 3 saves and loads each fitted candidate; Task 4 Qini
+and Task 5 policy scoring reuse loaded objects without retraining. An S-Learner
+with explicit treatment interactions is provided as a comparison. The final
+Colab cell downloads `artifacts/models/t_learner.zip`.
 
 The cells after it print:
 
@@ -120,7 +125,10 @@ def qini_curve(pilot, score):
     return pd.DataFrame({"share": share, "gain": gain})
 ```
 
-The chart legend shows **logistic 29.2 · boosting 6.6 · old AI 17.6**.
+The chart legend shows **T logistic 29.2 · T boosting 6.6 · S-Learner 28.0 · old AI 17.6**.
+T and S logistic are practically tied; the class keeps the logistic T-Learner as
+the shared reference, and choosing a winner on this pilot would use it up as an
+independent check.
 
 Common mistakes:
 
@@ -143,7 +151,7 @@ def build_customer_scores(df, uplift):
     return pd.DataFrame(
         {
             "customer_id": df["customer_id"].to_numpy(),
-            "purchase_probability": fit_purchase_baseline(df),
+            "purchase_probability": df["purchase_probability"].to_numpy(),
             "estimated_uplift": uplift,
             "expected_incremental_profit": profit,
             "recommended": select_under_budget(profit, cost, GROWTH_BUDGET),
@@ -174,11 +182,13 @@ two interpretation questions:
 | Results board | Complete analysis equivalent | What to read off |
 | --- | --- | --- |
 | `plot_effect_summary` | `07_uplift_diagnostics.png` (left two panels) | 13.8% naive vs 9.8% adjusted; uplift spread |
-| `plot_model_check` | `08b_holdout_auc_vs_pilot_qini.png` | logistic wins on AUC *and* pilot Qini |
-| `plot_budget_curve` | `09_budget_curve.png` | estimated profit at the budget: **+927** causal vs **−1,009** old AI |
+| `plot_model_check` | `08b_holdout_auc_vs_pilot_qini.png` | T and S logistic lead (and tie) on AUC *and* pilot Qini; boosting is last on both |
+| `plot_budget_curve` | `09_budget_curve.png` | estimated profit at the budget: **+927** causal vs **−1,009** old AI (the complete analysis plots the old AI with *true* profit, **−946**) |
 | `plot_targeting_map` | `10_targeting_map.png` | the 1,691 recommended are high-uplift, not high-probability |
 
-Question answers: about 4 of the 13.8 points were confounding; the spread is
+Question answers: by our estimate about 4 of the 13.8 points were confounding
+(at the reveal the true effect is 10.9, so really about 3, and the model
+over-corrected by about 1); the spread is
 wide, so one average effect cannot pick customers. Both checks agree here, but
 if they disagreed, trust the pilot Qini: AUC scores purchase, not uplift. The
 orange curve peaks beyond the budget line, so the budget binds. The grey curve
