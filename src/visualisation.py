@@ -86,6 +86,44 @@ def plot_qini_curves(curves: dict) -> Figure:
     return fig
 
 
+# --- Data checks -------------------------------------------------------------
+# Confounding and overlap, computed by the participant from observed data only.
+
+
+def plot_confounding_overlap(
+    smd, propensity: np.ndarray, treatment: np.ndarray, threshold: float = 0.1
+) -> Figure:
+    """Covariate balance (standardized mean difference) beside propensity overlap.
+
+    ``smd`` is a pandas Series indexed by feature name. Bars beyond
+    ``threshold`` in absolute value are highlighted as imbalanced.
+    """
+    smd = smd.sort_values()
+    propensity = np.asarray(propensity)
+    treated = np.asarray(treatment).astype(bool)
+    fig = Figure(figsize=(13.5, 4.9))
+    left, right = fig.subplots(1, 2)
+    left.barh(smd.index, smd.to_numpy(),
+              color=[ORANGE if abs(value) > threshold else GREY for value in smd])
+    for line in (-threshold, threshold):
+        left.axvline(line, color="black", linestyle="--", linewidth=1)
+    left.axvline(0, color="black", linewidth=1)
+    left.set_xlabel("standardized mean difference (coupon - no coupon)")
+    _tidy(left, "Before any coupon, the two groups already differ")
+
+    bins = np.linspace(0, 1, 41)
+    right.hist(propensity[~treated], bins=bins, alpha=0.6, color=GREY,
+               label="No coupon", density=True)
+    right.hist(propensity[treated], bins=bins, alpha=0.6, color=BLUE,
+               label="Coupon", density=True)
+    right.set_xlabel("estimated propensity P(coupon_sent = 1 | X)")
+    right.set_ylabel("density")
+    right.legend()
+    _tidy(right, "Do comparable customers exist in both groups?")
+    fig.tight_layout()
+    return fig
+
+
 # --- Results board -----------------------------------------------------------
 # The participant's closing charts. Each one uses only the participant's own
 # estimates; the facilitator's complete analysis adds the simulator truth.

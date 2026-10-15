@@ -189,6 +189,22 @@ def test_results_board_renders() -> None:
         assert fig._repr_png_().startswith(b"\x89PNG")
 
 
+def test_confounding_overlap_plot_highlights_imbalance() -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from src.visualisation import ORANGE, plot_confounding_overlap
+    from matplotlib.colors import to_hex
+
+    smd = pd.Series({"balanced": 0.02, "imbalanced": 0.3, "negative": -0.2})
+    rng = np.random.default_rng(0)
+    fig = plot_confounding_overlap(smd, rng.uniform(0.1, 0.6, 300), rng.integers(0, 2, 300))
+    assert fig._repr_png_().startswith(b"\x89PNG")
+    bars = fig.axes[0].patches
+    highlighted = {bar.get_width() for bar in bars if to_hex(bar.get_facecolor()) == ORANGE.lower()}
+    assert highlighted == {0.3, -0.2}
+
+
 def test_answer_notebook_is_in_sync_with_workshop() -> None:
     from scripts.build_answer_notebook import build_answers
 
@@ -224,6 +240,30 @@ def test_answer_notebook_reproduces_reference_numbers(tmp_path: Path, monkeypatc
     np.testing.assert_allclose(scores.loc[chosen, "expected_incremental_profit"].sum(), 927.19, atol=0.01)
     qini = {name: qini_coefficient(curve) for name, curve in result["curves"].items()}
     assert qini["T-Learner, logistic"] > qini["purchase probability (old AI)"] > qini["T-Learner, boosting"]
+
+    # Data overview: the budget covers only a small share of a full campaign.
+    overview = result["overview"]
+    assert overview["customers"] == 10_000
+    assert overview["cost to coupon everyone"] > 6 * overview["Growth Budget"]
+
+    # Balance and overlap: the five history features are confounded, the two
+    # response traits are not, and no customer lacks a comparable counterpart.
+    smd = result["balance"]["SMD"]
+    history = {"days_since_last_purchase", "orders_30d", "app_sessions_30d",
+               "average_order_value", "loyalty_score"}
+    assert set(smd.index[smd.abs() > 0.1]) == history
+    np.testing.assert_allclose(smd["loyalty_score"], 0.261, atol=5e-3)
+    propensity = result["propensity"]
+    assert 0.05 < propensity.min() and propensity.max() < 0.95
+
+    # List profile: the old AI picks likelier buyers yet loses money.
+    profile = result["list_profile"]
+    causal, old_ai = profile["causal list"], profile["old AI list"]
+    assert causal["customers"] == 1_691
+    assert old_ai["spend"] <= GROWTH_BUDGET + 1e-6
+    assert old_ai["mean purchase probability"] > causal["mean purchase probability"]
+    np.testing.assert_allclose(causal["estimated incremental profit"], 927.19, atol=0.01)
+    assert old_ai["estimated incremental profit"] < 0
 
 
 def test_concept_diagrams_render() -> None:
@@ -303,6 +343,8 @@ def test_notebook_is_participant_safe() -> None:
     source = (ROOT / "workshop.py").read_text(encoding="utf-8")
     assert "import solutions" not in source and "from solutions" not in source
     assert source.count("raise NotImplementedError") == 4  # Tasks 2, 3, 4, 5
+    # Simulator truth stays on the projector, never in the participant notebook.
+    assert "true_cate" not in source and "data/facilitator" not in source
     assert 'Path("artifacts").mkdir(parents=True, exist_ok=True)' in source
     assert (ROOT / "workshop.ipynb").exists()
 

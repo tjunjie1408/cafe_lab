@@ -47,6 +47,7 @@ from src.predictive import fit_purchase_baseline
 from src.visualisation import (
     plot_budget_curve,
     plot_causal_dag,
+    plot_confounding_overlap,
     plot_effect_summary,
     plot_model_check,
     plot_qini_curves,
@@ -62,6 +63,37 @@ observed.head()
 
 # %%
 plot_workshop_roadmap()
+
+# %% [markdown]
+# ## Meet the data
+# One row per customer: seven pre-coupon features, whether last month's campaign
+# sent a coupon (`coupon_sent`), whether the customer bought within 7 days
+# (`purchased_7d`), and two money columns for the policy at the end. Nothing to
+# code here: run the cells and answer the questions below them.
+
+# %%
+overview = pd.Series(
+    {
+        "customers": len(observed),
+        "share sent a coupon": observed["coupon_sent"].mean(),
+        "7-day purchase rate": observed["purchased_7d"].mean(),
+        "mean order margin": observed["expected_order_margin"].mean(),
+        "mean coupon cost": observed["expected_coupon_cost"].mean(),
+        "cost to coupon everyone": observed["expected_coupon_cost"].sum(),
+        "Growth Budget": GROWTH_BUDGET,
+    }
+).round(3)
+overview
+
+# %%
+observed[FEATURES].describe().T.round(2)
+
+# %% [markdown]
+# - Roughly what share of customers can the Growth Budget pay a coupon for?
+#   What does that mean for the order in which we pick them?
+# - A coupon costs about 1.7 and a purchase earns about 10.7 in margin. How many
+#   percentage points must the coupon raise a customer's purchase probability
+#   before it pays for itself?
 
 # %% [markdown]
 # The old AI ranks customers by predicted purchase probability. High reported
@@ -115,6 +147,48 @@ naive = naive_observed_difference(observed)
 print("naive observed difference:", naive)
 
 # %% [markdown]
+# ### Why the naive gap is biased: balance and overlap
+# Nothing to code: run both cells and read the evidence. If the coupon group
+# already looked different *before* any coupon, part of the gap is the backdoor
+# path T ← X → Y from the DAG, not the coupon.
+#
+# The **standardized mean difference** (SMD) puts every feature on one scale:
+# the gap in group means divided by the pooled standard deviation. |SMD| > 0.1
+# is the usual line for "imbalanced".
+
+# %%
+treated_x = observed.loc[observed["coupon_sent"] == 1, FEATURES]
+control_x = observed.loc[observed["coupon_sent"] == 0, FEATURES]
+balance = pd.DataFrame({"no coupon": control_x.mean(), "coupon": treated_x.mean()})
+balance["SMD"] = (treated_x.mean() - control_x.mean()) / np.sqrt(
+    (treated_x.var() + control_x.var()) / 2
+)
+balance.round(3)
+
+# %% [markdown]
+# Adjusting for X only works where comparable customers exist in **both**
+# groups (overlap, or positivity). The **propensity score** P(coupon | X) is the
+# probability the old campaign would have sent this customer a coupon. If some
+# customers had a propensity near 0 or 1, one of the T-Learner's two models
+# would have to guess for them with no data.
+
+# %%
+propensity_model = LogisticRegression(max_iter=2000).fit(observed[FEATURES], observed["coupon_sent"])
+propensity = propensity_model.predict_proba(observed[FEATURES])[:, 1]
+print(f"propensity range:           {propensity.min():.2f} - {propensity.max():.2f}")
+print(f"share outside [0.05, 0.95]: {((propensity < 0.05) | (propensity > 0.95)).mean():.1%}")
+plot_confounding_overlap(balance["SMD"], propensity, observed["coupon_sent"])
+
+# %% [markdown]
+# - Which features cross |SMD| = 0.1? Did the old campaign send coupons to
+#   *better* or *worse* customers, so does the naive gap overstate or
+#   understate the coupon's effect?
+# - `price_sensitivity` and `offer_affinity` are balanced. Find them in the DAG:
+#   why keep them in the model anyway?
+# - Do the two histograms overlap across the whole range? Write the propensity
+#   range into memo section 2 (identification assumptions).
+
+# %% [markdown]
 # ## Task 3 - Train a T-Learner, then test it on unseen customers
 # Real models are judged on data they never saw. Hold out 30% of the customers,
 # train on the other 70%.
@@ -149,6 +223,18 @@ def t_learner_uplift(train, score, features=FEATURES, make_model=make_logistic):
 
 mu0, mu1, uplift = t_learner_uplift(train, test)
 plot_uplift_distribution(uplift)
+
+# %%
+break_even = (test["expected_coupon_cost"] / test["expected_order_margin"]).to_numpy()
+print(f"mean uplift:            {uplift.mean():+.3f}")
+print(f"share with uplift < 0:  {(uplift < 0).mean():.1%}")
+print(f"share above break-even: {(uplift > break_even).mean():.1%}")
+
+# %% [markdown]
+# - Compare the mean uplift with the naive gap from Task 2. Which way did
+#   adjusting for X move it, and does that match what the balance table said?
+# - If the average customer is below break-even, why can a targeted campaign
+#   still make money?
 
 # %% [markdown]
 # **Is each outcome model any good?** Check it the way you would any classifier:
@@ -278,12 +364,18 @@ print(f"mean estimated uplift (ATE):  {scores['estimated_uplift'].mean():+.3f}")
 
 # %% [markdown]
 # ## Results board
-# Nothing to fill in: run these four cells once Task 5 works. Every chart is
-# built from your own model, so it shows exactly what your analysis claims.
-# Put the numbers in your decision memo.
+# Nothing to code: run these cells once Task 5 works and answer the questions
+# under each chart. Every chart is built from your own model, so it shows
+# exactly what your analysis claims. The numbers go into your decision memo.
 
 # %%
 plot_effect_summary(naive, uplift_all)
+
+# %% [markdown]
+# - How much of the naive gap was confounding, and how much is the coupon?
+#   (Memo section 1.)
+# - Look at the spread: would a single "average effect" be enough to decide
+#   who gets a coupon?
 
 # %%
 auc = {
@@ -291,6 +383,10 @@ auc = {
     "boosting": held_out_auc(test, mu0_gb, mu1_gb),
 }
 plot_model_check(auc, curves)
+
+# %% [markdown]
+# - Did the two checks agree on the winner? Which check would you trust if they
+#   disagreed, and why? (Memo section 5.)
 
 # %%
 plot_budget_curve(
@@ -300,8 +396,43 @@ plot_budget_curve(
     GROWTH_BUDGET,
 )
 
+# %% [markdown]
+# - Where does the orange curve peak, and is that before or after the Growth
+#   Budget line? What does that say about whether the budget binds?
+# - Why does the grey curve fall as the old AI spends more?
+
 # %%
 plot_targeting_map(scores["purchase_probability"], scores["estimated_uplift"], scores["recommended"])
+
+# %% [markdown]
+# ### Who did each list pick?
+# Same budget, two rankings: your causal list, and the old AI's list (highest
+# purchase probability first). Both are scored with *your* estimates.
+
+# %%
+cost = observed["expected_coupon_cost"].to_numpy()
+old_ai = select_under_budget(scores["purchase_probability"].to_numpy(), cost, GROWTH_BUDGET)
+target_lists = {"causal list": scores["recommended"].to_numpy() == 1, "old AI list": old_ai == 1}
+list_profile = pd.DataFrame(
+    {
+        name: {
+            "customers": mask.sum(),
+            "spend": cost[mask].sum(),
+            "mean coupon cost": cost[mask].mean(),
+            "mean purchase probability": scores.loc[mask, "purchase_probability"].mean(),
+            "mean estimated uplift": scores.loc[mask, "estimated_uplift"].mean(),
+            "estimated incremental profit": scores.loc[mask, "expected_incremental_profit"].sum(),
+        }
+        for name, mask in target_lists.items()
+    }
+).round(3)
+list_profile
+
+# %% [markdown]
+# - The old AI's customers buy more often. Why does its list still lose money?
+# - On the targeting map, find the high-probability, low-uplift corner. Which
+#   of the four archetypes from the start of the session live there?
+#   (Memo section 4.)
 
 # %% [markdown]
 # ## Reveal - watch the projector
@@ -311,5 +442,28 @@ plot_targeting_map(scores["purchase_probability"], scores["estimated_uplift"], s
 
 # %% [markdown]
 # ### Decision memo (fill in)
-# Estimated effect · identification assumptions · budget impact ·
-# recommended action · what still needs validation (e.g. a holdout experiment).
+# Replace every `___` with a number from the cell named in brackets.
+#
+# **1. Estimated effect.** The naive treated-minus-control gap is ___ [Task 2],
+# but it is not an ATE because ___ [balance table]. After adjusting for the
+# pre-coupon features, the T-Learner's average effect is ___ [Check your
+# policy], and it varies from customer to customer [Results board, first chart].
+#
+# **2. Identification assumptions.**
+# - Exchangeability: the features in the DAG capture every common cause of
+#   coupon and purchase. A confounder we might be missing: ___.
+# - Overlap: propensity ranges ___ to ___; ___ of customers fall outside
+#   [0.05, 0.95] [balance and overlap].
+# - Consistency: one coupon type, one 7-day outcome window.
+# - No post-coupon variables (redemption, browsing) are adjusted for.
+#
+# **3. Budget impact.** ___ customers recommended, spending ___ of the ___
+# Growth Budget, for an estimated incremental profit of ___ [Check your
+# policy]. The old AI list would earn ___ under the same budget [Who did each
+# list pick?].
+#
+# **4. Recommended action.** Send coupons to ___, because ___.
+#
+# **5. What still needs validation.** Pilot Qini: logistic ___, boosting ___,
+# old AI ___ [Task 4]. Before scaling: ___ (for example, a randomized holdout
+# inside the recommended list).
