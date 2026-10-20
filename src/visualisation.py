@@ -431,3 +431,124 @@ def plot_t_learner_schematic() -> Figure:
             "exchangeability, overlap and consistency.",
             fontsize=8.5, style="italic", color=DARK)
     return fig
+
+
+def plot_coupon_campaign_summary(
+    *, selected_count: int, total_customers: int, expected_spend: float,
+    budget: float, probability_without: float, probability_with: float,
+    extra_purchases: float, expected_profit: float, baseline_profit: float,
+) -> Figure:
+    """Show the selected segment's modeled purchase contrast and policy value."""
+    fig = Figure(figsize=(14, 7))
+    fig.suptitle("What the coupon plan is expected to buy", x=0.08, y=0.98,
+                 ha="left", fontsize=21, fontweight="bold", color=DARK)
+    for x, title, value in [
+        (0.08, "CUSTOMERS SELECTED", f"{selected_count:,} / {total_customers:,}"),
+        (0.41, "EXPECTED COUPON SPEND", f"{expected_spend:,.2f} / {budget:,.0f}"),
+        (0.76, "EXPECTED EXTRA PURCHASES", f"{extra_purchases:,.1f}"),
+    ]:
+        fig.text(x, 0.87, title, fontsize=10, color=DARK)
+        fig.text(x, 0.815, value, fontsize=21, fontweight="bold", color=DARK)
+
+    buyers = fig.add_axes((0.17, 0.25, 0.30, 0.40))
+    if selected_count and np.isfinite([probability_without, probability_with]).all():
+        rates = np.array([probability_without, probability_with]) * 100
+        buyers.barh([1, 0], rates, color=[GREY, BLUE], height=0.46)
+        for y, rate in zip([1, 0], rates):
+            buyers.text(rate + 2 if rate < 83 else rate - 2, y, f"{rate:.1f}",
+                        ha="left" if rate < 83 else "right", va="center", fontsize=13)
+        difference = rates[1] - rates[0]
+        change = f"About {abs(difference):.0f} {'more' if difference >= 0 else 'fewer'} buyers per 100"
+        buyers.text(0.5, -0.37, change,
+                    transform=buyers.transAxes, ha="center", fontsize=13, fontweight="bold")
+    else:
+        buyers.text(0.5, 0.5, "No customers selected", transform=buyers.transAxes,
+                    ha="center", va="center", fontsize=13)
+    buyers.set_yticks([1, 0], ["No coupon", "With coupon"], fontsize=12)
+    buyers.set_xlim(0, 100)
+    buyers.set_ylim(-0.6, 1.6)
+    buyers.set_xlabel("Expected buyers per 100 selected customers", fontsize=10)
+    _tidy(buyers, "Same customers, two coupon settings")
+
+    value = fig.add_axes((0.68, 0.25, 0.28, 0.40))
+    profits = [baseline_profit, expected_profit]
+    value.barh([1, 0], profits, color=[RED if p < 0 else GREEN for p in profits], height=0.46)
+    left, right = min(0, *profits), max(0, *profits)
+    padding = max(right - left, 1.0) * 0.22
+    value.set_xlim(left - padding, right + padding)
+    value.set_ylim(-0.6, 1.6)
+    for y, profit in zip([1, 0], profits):
+        value.annotate(f"{profit:+,.2f}", (profit, y),
+                       xytext=(0, 22), textcoords="offset points",
+                       ha="center", va="bottom", fontsize=13)
+    value.axvline(0, color=DARK, linewidth=1)
+    value.set_yticks([1, 0], ["Old purchase score", "Coupon-value rule"], fontsize=12)
+    value.set_xlabel("Estimated incremental profit (money units)", fontsize=10)
+    _tidy(value, "Money left after coupon costs")
+    value.text(0.5, -0.37, f"{expected_profit - baseline_profit:+,.2f} vs the old rule",
+               transform=value.transAxes, ha="center", fontsize=13, fontweight="bold")
+    fig.text(0.08, 0.04, "Model estimates, not measured returns. No uncertainty intervals computed. "
+             "Test the campaign before scaling.", fontsize=11, color=DARK)
+    return fig
+
+
+def plot_coupon_audience(profiles: dict[str, dict[str, float]]) -> Figure:
+    """Compare observed characteristics of the two selected customer lists."""
+    fig = Figure(figsize=(14, 6))
+    fig.suptitle("Who is on the coupon list?", x=0.06, y=0.98,
+                 ha="left", fontsize=21, fontweight="bold", color=DARK)
+    colors = [BLUE, GREY]
+    labels = list(profiles)
+    for x, label, color in zip([0.06, 0.52], labels, colors):
+        fig.text(x, 0.88, label, color=color, fontsize=13, fontweight="bold")
+
+    for position, feature, title, unit in [
+        ((0.06, 0.25, 0.19, 0.46), "orders_30d", "Buying frequency", "Orders in the last 30 days"),
+        ((0.34, 0.25, 0.19, 0.46), "days_since_last_purchase", "How recently they bought", "Days since last purchase"),
+    ]:
+        ax = fig.add_axes(position)
+        means = [profile[feature] for profile in profiles.values()]
+        bars = ax.barh([1, 0], means, color=colors, height=0.46)
+        ax.bar_label(bars, fmt="%.1f", padding=5, fontsize=13)
+        ax.set_xlim(0, max(1, *means) * 1.25)
+        ax.set_ylim(-0.6, 1.6)
+        ax.set_yticks([1, 0], ["New", "Old"], fontsize=12)
+        ax.set_xlabel(unit, fontsize=10)
+        _tidy(ax, title)
+
+    traits = fig.add_axes((0.72, 0.25, 0.24, 0.46))
+    features = ["price_sensitivity", "offer_affinity", "loyalty_score"]
+    positions = np.arange(len(features))[::-1]
+    for offset, profile, color in zip([0.16, -0.16], profiles.values(), colors):
+        means = [profile[feature] for feature in features]
+        bars = traits.barh(positions + offset, means, height=0.28, color=color)
+        traits.bar_label(bars, fmt="%.2f", padding=4, fontsize=11)
+    traits.set_xlim(0, 1)
+    traits.set_yticks(positions, ["Price sensitivity", "Offer affinity", "Loyalty"], fontsize=11)
+    traits.set_xlabel("Dataset score (0 to 1)", fontsize=10)
+    _tidy(traits, "Attitude to price and offers")
+    fig.text(0.06, 0.08, "All bars are list averages, not eligibility cutoffs or proven causes of response.",
+             fontsize=11, color=DARK)
+    fig.text(0.06, 0.035, "Send-list membership still comes from estimated net value + budget: recommended = 1.",
+             fontsize=11, color=DARK)
+    return fig
+
+
+def plot_campaign_review() -> Figure:
+    """Contrast the old reporting rule with a reviewable targeting workflow."""
+    fig, ax = _canvas(12.4, 6.1, "A coupon plan finance can review")
+    rows = [
+        (4.95, "BEFORE", ["Likely buyers", "Send coupons", "Count recipient sales"], "#E8E8E8"),
+        (3.2, "NOW", ["Estimate extra buying", "Apply costs + budget", "Propose a send list"], "#DFEAF8"),
+        (1.45, "REVIEW", ["Keep data + model files", "Show margin minus cost", "Test coupon vs no coupon"], "#E5EFDF"),
+    ]
+    centers = [3.05, 6.65, 10.25]
+    for y, label, steps, color in rows:
+        ax.text(0.2, y, label, fontsize=11, fontweight="bold", color=DARK, va="center")
+        for x, step in zip(centers, steps):
+            _node(ax, x, y, 3.0, 1.02, step, color=color, text_color=DARK)
+        for start, end in zip(centers, centers[1:]):
+            _link(ax, (start + 1.57, y), (end - 1.57, y))
+    ax.text(0.2, 0.25, "Explain the list and its costs. Keep forecasts separate from measured results.",
+            fontsize=11, color=DARK)
+    return fig

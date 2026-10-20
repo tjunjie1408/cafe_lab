@@ -12,6 +12,10 @@ coupon actually changes, and decide who should get one under a fixed budget.
 > Policy decides what we should do.  
 > Language explains why.
 
+The workshop uses a **Colab notebook + Notion book**. The notebook contains
+the coding tasks, explanations and result summaries. Companion lecture notes
+are provided in an online Notion document.
+
 ## Before the session
 
 - A laptop with Chrome, Edge or Firefox, and a Google account for Colab.
@@ -34,8 +38,9 @@ coupon actually changes, and decide who should get one under a fixed budget.
    5. build the budget-constrained targeting policy.
 4. The *Check your policy* cell prints the numbers for your five-part
    decision memo.
-5. Run the final download cell to save your trained T-Learner as a ZIP containing
-   the fitted models and JSON metadata with feature order and package versions.
+5. Download your trained T-Learner as a ZIP containing fitted models and JSON
+   metadata. Review the closing campaign results and selected-customer profiles
+   to explain who should receive coupons and the estimated business value.
 6. The reveal happens on the projector.
 
 The notebook keeps four coding TODOs. Each candidate is trained once, saved,
@@ -57,6 +62,6 @@ If Colab disconnects, reopen your Drive copy and choose
 
 The notebook creates `artifacts/customer_scores.csv` and three model bundles
 under `artifacts/models/`: logistic T-Learner, boosting T-Learner, and S-Learner.
-The final Colab cell downloads the logistic T-Learner bundle and its metadata.
+The model-download cell packages the logistic T-Learner bundle and its metadata.
 
 All data is synthetic.
