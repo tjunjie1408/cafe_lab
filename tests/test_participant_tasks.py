@@ -189,6 +189,37 @@ def test_results_board_renders() -> None:
         assert fig._repr_png_().startswith(b"\x89PNG")
 
 
+def test_campaign_summary_uses_selected_customer_denominator_and_net_value() -> None:
+    from src.visualisation import plot_coupon_campaign_summary
+
+    fig = plot_coupon_campaign_summary(
+        selected_count=100, total_customers=1000, expected_spend=150, budget=200,
+        probability_without=0.2, probability_with=0.4, extra_purchases=20,
+        expected_profit=50, baseline_profit=-30,
+    )
+    buyers, profit = fig.axes
+    np.testing.assert_allclose([bar.get_width() for bar in buyers.patches], [20, 40])
+    np.testing.assert_allclose([bar.get_width() for bar in profit.patches], [-30, 50])
+    assert buyers.get_xlim() == (0, 100)
+    assert "selected customers" in buyers.get_xlabel()
+    assert any("20 more buyers per 100" in text.get_text() for text in buyers.texts)
+    assert fig._repr_png_().startswith(b"\x89PNG")
+
+
+def test_campaign_summary_handles_no_selection_without_inventing_purchase_rates() -> None:
+    from src.visualisation import plot_coupon_campaign_summary, plot_campaign_review
+
+    fig = plot_coupon_campaign_summary(
+        selected_count=0, total_customers=1000, expected_spend=0, budget=200,
+        probability_without=np.nan, probability_with=np.nan, extra_purchases=0,
+        expected_profit=0, baseline_profit=-30,
+    )
+    assert not fig.axes[0].patches
+    assert any("No customers selected" in text.get_text() for text in fig.axes[0].texts)
+    assert fig._repr_png_().startswith(b"\x89PNG")
+    assert plot_campaign_review()._repr_png_().startswith(b"\x89PNG")
+
+
 def test_confounding_overlap_plot_highlights_imbalance() -> None:
     import matplotlib
 
@@ -386,7 +417,12 @@ def test_colab_model_download_contains_both_artifacts(tmp_path: Path, monkeypatc
     colab.files = types.SimpleNamespace(download=downloaded.append)
     monkeypatch.setitem(sys.modules, "google.colab", colab)
     notebook = jupytext.read(ROOT / "workshop.py")
-    exec(notebook.cells[-1].source, {"model_path": model_path})
+    download_cells = [
+        cell for cell in notebook.cells
+        if cell.cell_type == "code" and "model_archive = model_path.with_suffix" in cell.source
+    ]
+    assert len(download_cells) == 1
+    exec(download_cells[0].source, {"model_path": model_path})
 
     archive_path = model_path.with_suffix(".zip")
     assert downloaded == [str(archive_path.resolve())]

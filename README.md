@@ -19,6 +19,11 @@ The conceptual framework is:
 
 ## Setup
 
+The current teaching format is **Colab notebook + Notion book**; slides are
+retained as historical assets. Start with [`workshop.ipynb`](workshop.ipynb) for
+the live reading-and-coding sequence. Companion lecture notes are provided
+in an online Notion document.
+
 Requires **Python 3.12**. Direct dependencies are pinned in
 [`requirements.txt`](requirements.txt), with a full transitive lock in
 [`requirements.lock.txt`](requirements.lock.txt) for an identical, verified
